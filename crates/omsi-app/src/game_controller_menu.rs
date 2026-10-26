@@ -90,8 +90,7 @@ fn gamepad_rows(app: &App, connected: &[crate::controllers::Connected]) -> Rows 
     ].into_iter().flatten());
     out.push(("DualSense".into(), HEADING.into()));
     out.extend([
-        crate::game_lists::slider_row(app, "pad_ds_triggers", "Adaptive triggers", "How hard L2 and R2 push back: the brakes holding the bus, the retarder's notch, the ABS (off: free triggers)", &|v| if v < 0.05 { "Off".to_string() } else { format!("{:.0} %", v * 100.0) }),
-        crate::game_lists::switch_row(app, "pad_ds_notch", "Retarder notch on the brake trigger", "On a bus with a retarder, L2 has a notch where the brakes begin"),
+        crate::game_lists::slider_row(app, "pad_ds_triggers", "Adaptive triggers", "How hard L2 and R2 push back: R2 while a brake holds the bus, L2 when the ABS works (off: free triggers)", &|v| if v < 0.05 { "Off".to_string() } else { format!("{:.0} %", v * 100.0) }),
         crate::game_lists::switch_row(app, "pad_ds_lightbar", "Light bar shows the bus", "Indicators, doors, brakes and faults on the pad's light; off: its own light"),
     ].into_iter().flatten());
     out.push(("Buttons".into(), HEADING.into()));

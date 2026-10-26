@@ -121,8 +121,9 @@ impl App {
         };
         let v = &p.vehicle;
         let on = |names: &[&str]| names.iter().any(|n| v.var(n).unwrap_or(0.0) > 0.5);
-        let lamps = indicator_lamps(v);
-        let lamp = |k: usize| lamps.as_ref().is_some_and(|l| v.var(if k == 0 { &l.0 } else { &l.1 }).unwrap_or(0.0) > 0.5);
+        let names = pad_names(v);
+        let lamps = names.lamps.as_ref();
+        let lamp = |k: usize| lamps.is_some_and(|l| v.var(if k == 0 { &l.0 } else { &l.1 }).unwrap_or(0.0) > 0.5);
         let indicator = if on(&["lights_sw_warnblinker"]) {
             3
         } else {
@@ -148,8 +149,12 @@ impl App {
             stop_requested: on(&["haltewunsch", "stop_request"]),
             reverse: on(&["lights_rueckfahr"]),
             gear: crate::plugin_io::bus::gear(self),
-            retarder: ["retarder", "retarder_level"].iter().any(|n| v.var(n).is_some()),
+            retarder: ["retarder", "retarder_level", "antrieb_retarder", "antrieb_retarderstufe"].iter().any(|n| v.var(n).is_some()),
             brake: v.physics.controls.brake.clamp(0.0, 1.0),
+            throttle: v.physics.controls.throttle.clamp(0.0, 1.0),
+            abs: ["bremse_abs_eingriff", "abs_eingriff"].iter().find_map(|n| v.var(n)).map(|x| x > 0.5),
+            rpm: ["engine_n", "antrieb_eng_n", "engine_rpm", "motor_n", "motor_rpm"].iter().find_map(|n| v.var(n)).filter(|_| omsi_sim::startup::engine_running(v)).unwrap_or(0.0),
+            redline: names.redline,
             sliding: v.rigid.as_ref().is_some_and(|r| !r.holding),
             kmh: v.physics.velocity_kmh().abs(),
             crashes: v.crashes,
@@ -420,31 +425,53 @@ fn keys_steer_over_idle_stick(x: f32, keys_steering: f32) -> bool {
     x == 0.0 && keys_steering != 0.0
 }
 
-/// The variables of the indicators' lamps (left, right): OMSI's stock `lights_blinker_l` and
-/// `_r`, else the bus's own, found once per bus among its variables (`lamp_names`). Each bus
-/// met also says in the log the variables a DualSense could show, to tell what one names
-/// otherwise.
-fn indicator_lamps(v: &omsi_sim::VehicleInstance) -> Option<(String, String)> {
-    if v.var("lights_blinker_l").is_some() && v.var("lights_blinker_r").is_some() {
-        return Some(("lights_blinker_l".into(), "lights_blinker_r".into()));
-    }
+/// What a pad shows of a bus that its script names its own way, found once per bus: the
+/// indicators' lamps (OMSI's stock `lights_blinker_l` and `_r`, else `lamp_names`) and the
+/// engine's governor speed among its constants (`redline_of`). Each bus met also says in the
+/// log the variables and constants of the kind, to tell what one names otherwise.
+#[derive(Clone, Default)]
+struct PadNames {
+    lamps: Option<(String, String)>,
+    redline: Option<f32>,
+}
+
+fn pad_names(v: &omsi_sim::VehicleInstance) -> PadNames {
     thread_local! {
-        static FOUND: std::cell::RefCell<(usize, Option<(String, String)>)> = const { std::cell::RefCell::new((0, None)) };
+        static FOUND: std::cell::RefCell<(usize, PadNames)> = std::cell::RefCell::new((0, PadNames::default()));
     }
     let key = std::sync::Arc::as_ptr(v.var_index()) as usize;
     FOUND.with(|f| {
         let mut f = f.borrow_mut();
         if f.0 != key {
             let names: Vec<&str> = v.var_index().keys().map(String::as_str).collect();
-            let mut said: Vec<&str> = names.iter().copied().filter(|n| ["blink", "retard", "halte", "abs", "getr", "gang", "wunsch"].iter().any(|w| n.contains(w))).collect();
+            let lamps = if v.var("lights_blinker_l").is_some() && v.var("lights_blinker_r").is_some() {
+                Some(("lights_blinker_l".to_string(), "lights_blinker_r".to_string()))
+            } else {
+                lamp_names(&names)
+            };
+            let consts: Vec<(&str, f32)> = v.ty.program.constants().collect();
+            let redline = redline_of(&consts);
+            let mut said: Vec<&str> = names.iter().copied().filter(|n| ["blink", "retard", "halte", "abs", "getr", "wunsch"].iter().any(|w| n.contains(w))).collect();
             said.sort_unstable();
             said.truncate(80);
-            let lamps = lamp_names(&names);
-            log::info!("DualSense: the bus's indicator lamps {lamps:?}; its variables of the kind: {}", said.join(" "));
-            *f = (key, lamps);
+            let mut maxima: Vec<String> = consts.iter().filter(|(n, _)| n.contains("max") || n.contains("abregel")).map(|(n, x)| format!("{n}={x}")).collect();
+            maxima.sort_unstable();
+            maxima.truncate(40);
+            log::info!("DualSense: the bus's indicator lamps {lamps:?}, governor {redline:?} rpm; its variables of the kind: {}; its constants: {}", said.join(" "), maxima.join(" "));
+            *f = (key, PadNames { lamps, redline });
         }
         f.1.clone()
     })
+}
+
+/// The engine's governor speed among a script's constants (lower case): a maximum speed of
+/// the engine, as a rev counter has it (1000..9000 rpm).
+fn redline_of(consts: &[(&str, f32)]) -> Option<f32> {
+    const SPEED: [&str; 10] = ["n_max", "nmax", "max_n", "maxn", "drehzahl_max", "maxdrehzahl", "abregel", "redline", "rpm_max", "max_rpm"];
+    let mut found: Vec<(&str, f32)> = consts.iter().copied().filter(|(n, x)| SPEED.iter().any(|w| n.contains(w)) && (1000.0..9000.0).contains(x)).collect();
+    // (the engine's own before another's: a gearbox's, a fan's)
+    found.sort_by_key(|(n, _)| (!["eng", "motor", "antrieb"].iter().any(|w| n.contains(w)), n.len()));
+    found.first().map(|(_, x)| *x)
 }
 
 /// Among a script's variables (lower case), the indicator lamps' (left, right): a name with
@@ -463,6 +490,14 @@ fn lamp_names(names: &[&str]) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_governor_is_found_among_the_constants() {
+        let consts = [("fan_n_max", 3000.0), ("engine_n_max", 2300.0), ("door_maxspeed", 2.0)];
+        assert_eq!(super::redline_of(&consts), Some(2300.0));
+        assert_eq!(super::redline_of(&[("antrieb_abregeldrehzahl", 2100.0)]), Some(2100.0));
+        assert_eq!(super::redline_of(&[("bremse_max", 1.0), ("n_max", 25000.0)]), None);
+    }
+
     #[test]
     fn indicator_lamps_are_found_by_their_names() {
         let names = ["c2_lights_blinker_l", "c2_lights_blinker_r", "lights_sw_blinker_l", "blinker_snd_r", "c2_blinker_l_anim", "door_0"];

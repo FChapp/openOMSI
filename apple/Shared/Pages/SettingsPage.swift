@@ -238,6 +238,11 @@ struct SettingsPage: View {
             SectionTitle("DualSense").padding(.top, 8)
             SettingSlider(label: "Adaptive triggers", key: "pad_ds_triggers", range: 0 ... 1, step: 0.1, fallback: 1, round: 0.1) { $0 < 0.05 ? off : String(format: "%.0f %%", $0 * 100) }
             SettingToggle(label: "Light bar shows the bus (indicators, doors, brakes)", key: "pad_ds_lightbar", fallback: true)
+            SettingSelect(label: "Gyro camera", key: "pad_ds_gyro", options: [("off", "Off"), ("on", "Always"), ("touch", "While touching the touchpad")])
+            SettingSlider(label: "Gyro sensitivity", key: "pad_ds_gyro_sens", range: 0.25 ... 3, step: 0.05, fallback: 1, round: 0.01) { String(format: "x%.2f", $0) }
+            SettingToggle(label: "Touchpad as mouse", key: "pad_ds_touch", fallback: true)
+            SettingSlider(label: "Touchpad speed", key: "pad_ds_touch_speed", range: 0.25 ... 3, step: 0.05, fallback: 1, round: 0.01) { String(format: "x%.2f", $0) }
+            SettingToggle(label: "Low battery warning", key: "pad_ds_battery", fallback: true)
             SectionTitle("Force feedback").padding(.top, 8)
             SettingToggle(label: "Force feedback and vibration", key: "ff_enabled", fallback: true)
             SettingToggle(label: "Invert force feedback by default", key: "ff_invert")

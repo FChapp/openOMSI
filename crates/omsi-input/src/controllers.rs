@@ -20,6 +20,7 @@ use gilrs::{Axis, EventType, Gilrs};
 use std::path::Path;
 
 mod dualsense_feedback;
+mod dualsense_input;
 mod held;
 use held::HeldButtons;
 mod ffb;
@@ -284,6 +285,8 @@ pub struct Analog {
     /// How far the head is to turn this moment, right and down (-1 .. 1 each): a set-up
     /// axis that looks round, or a gamepad's right stick (#454).
     pub look: [f32; 2],
+    /// How the head is to turn by a DualSense's gyroscope (degrees a second, right and up).
+    pub gyro: [f32; 2],
 }
 
 impl Analog {
@@ -1053,6 +1056,11 @@ pub struct Controllers {
     /// state over frames
     pad_bump: f32,
     haptics: crate::dualsense::feedback::Haptics,
+    /// The gyroscope, touchpad and battery of a DualSense (`dualsense_input`)
+    pub ds_input: crate::dualsense::input::Prefs,
+    touchpad: crate::dualsense::input::Touchpad,
+    touch_click: bool,
+    battery: crate::dualsense::input::BatteryWatch,
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     wheel: Option<crate::evdev_ff::Wheel>,
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
@@ -1125,7 +1133,7 @@ impl Controllers {
     }
 
     fn with_devices(devices: Devices, cfg: Vec<DeviceCfg>) -> Controllers {
-        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, ff_smooth: 0.0, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), pad_bump: 0.0, haptics: Default::default(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
+        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_smooth: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), pad_bump: 0.0, haptics: Default::default(), ds_input: Default::default(), touchpad: Default::default(), touch_click: false, battery: Default::default(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
     }
 
     /// Whether this device steers the bus (set up so, or steering now): the photo mode's camera takes none for its gamepad (a wheel turned it).
@@ -1154,15 +1162,16 @@ impl Controllers {
             return;
         }
         let connected = self.devices.connected();
+        #[allow(unused_mut)]
+        let mut actions: Vec<(String, &str, bool)> = events.into_iter().filter_map(|(name, b, down)| Some((name, gamepad_profile::default_action(b)?, down))).collect();
         #[cfg(windows)]
         for (name, n, down) in &self.raw_buttons {
             let sony = find_connected(&connected, name).is_some_and(|c| c.gamepad && sony_pad(&c.name, c.hardware_id));
-            if let Some(b) = sony.then(|| gamepad_profile::sony_direct_input_button(*n, HAT_BUTTONS)).flatten() {
-                events.push((name.clone(), b, *down));
+            if let Some(action) = sony.then(|| gamepad_profile::sony_direct_input_action(*n, HAT_BUTTONS)).flatten() {
+                actions.push((name.clone(), action, *down));
             }
         }
-        for (name, button, down) in events {
-            let Some(action) = gamepad_profile::default_action(button) else { continue };
+        for (name, action, down) in actions {
             if self.off(&name) || !find_connected(&connected, &name).is_some_and(|c| c.gamepad) {
                 continue;
             }
@@ -1388,6 +1397,7 @@ impl Controllers {
         }
         let before = self.steer.as_ref().filter(|s| steer.as_ref().is_some_and(|n| n.0 == s.0)).map(|s| s.1);
         self.steer = steer.map(|(name, v, ff)| (name, v, before.unwrap_or(v), ff));
+        self.dualsense_input(&mut out);
         out
     }
 

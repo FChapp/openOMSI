@@ -101,6 +101,22 @@ fn dualsense_settings_round_trip_and_are_clamped() {
     assert_eq!((game.pad_ds_triggers, game.pad_ds_lightbar), (0.4, false));
 }
 
+/// The DualSense's gyroscope, touchpad and battery settings are kept and held in their
+/// ranges, the game and the launcher alike.
+#[test]
+fn dualsense_input_settings_round_trip_and_are_clamped() {
+    let d = Settings::default();
+    assert_eq!((d.pad_ds_gyro.as_str(), d.pad_ds_gyro_sens, d.pad_ds_touch, d.pad_ds_touch_speed, d.pad_ds_battery), ("off", 1.0, true, 1.0, true));
+    let s = Settings::from_text("pad_ds_gyro=Touch\npad_ds_gyro_sens=2.5\npad_ds_touch=0\npad_ds_touch_speed=0.5\npad_ds_battery=0\n");
+    let back = Settings::from_text(&s.to_text());
+    assert_eq!((back.pad_ds_gyro.as_str(), back.pad_ds_gyro_sens, back.pad_ds_touch, back.pad_ds_touch_speed, back.pad_ds_battery), ("touch", 2.5, false, 0.5, false));
+    let wild = Settings::from_text("pad_ds_gyro=sideways\npad_ds_gyro_sens=99\npad_ds_touch_speed=0\n");
+    assert_eq!((wild.pad_ds_gyro.as_str(), wild.pad_ds_gyro_sens, wild.pad_ds_touch_speed), ("off", 3.0, 0.25));
+    let launcher = omsi_launcher_lib::settings_from_text(Some("pad_ds_gyro=on\npad_ds_gyro_sens=2\npad_ds_touch=0\npad_ds_battery=0\n"));
+    let game = Settings::from_text(&omsi_launcher_lib::settings_to_text(&launcher, None));
+    assert_eq!((game.pad_ds_gyro.as_str(), game.pad_ds_gyro_sens, game.pad_ds_touch, game.pad_ds_touch_speed, game.pad_ds_battery), ("on", 2.0, false, 1.0, false));
+}
+
 /// The enhanced clouds' quality is kept, `high` unless the file says `low`.
 #[test]
 fn street_light_round_trips_and_reaches_the_renderer() {

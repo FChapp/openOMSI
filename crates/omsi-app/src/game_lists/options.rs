@@ -32,6 +32,8 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "pad_steer_speed" => s.pad_steer_speed,
         "pad_deadzone" => s.pad_deadzone,
         "pad_ds_triggers" => s.pad_ds_triggers,
+        "pad_ds_gyro_sens" => s.pad_ds_gyro_sens,
+        "pad_ds_touch_speed" => s.pad_ds_touch_speed,
         "ui_scale" => s.ui_scale,
         "chat_size" => s.chat_size,
         "ui_opacity" => s.ui_opacity,
@@ -166,10 +168,6 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
         "pad_deadzone" => {
             app.settings.pad_deadzone = (v.clamp(0.0, 0.4) * 100.0).round() / 100.0;
             Some(("pad_deadzone", app.settings.pad_deadzone.to_string()))
-        }
-        "pad_ds_triggers" => {
-            app.settings.pad_ds_triggers = (v.clamp(0.0, 1.0) * 10.0).round() / 10.0;
-            Some(("pad_ds_triggers", app.settings.pad_ds_triggers.to_string()))
         }
         "look_smoothing_ms" => {
             app.settings.look_smoothing_ms = v.round();
@@ -383,6 +381,26 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
             app.edit_weather(|w| w.wind.0 = v);
             None
         }
+        _ => pad_ds_set(app, verb, v),
+    }
+}
+
+/// A DualSense's sliders (`option_set`'s, kept apart).
+fn pad_ds_set(app: &mut App, verb: &str, v: f32) -> Option<(&'static str, String)> {
+    let s = &mut app.settings;
+    match verb {
+        "pad_ds_triggers" => {
+            s.pad_ds_triggers = (v.clamp(0.0, 1.0) * 10.0).round() / 10.0;
+            Some(("pad_ds_triggers", s.pad_ds_triggers.to_string()))
+        }
+        "pad_ds_gyro_sens" => {
+            s.pad_ds_gyro_sens = (v.clamp(0.25, 3.0) * 20.0).round() / 20.0;
+            Some(("pad_ds_gyro_sens", s.pad_ds_gyro_sens.to_string()))
+        }
+        "pad_ds_touch_speed" => {
+            s.pad_ds_touch_speed = (v.clamp(0.25, 3.0) * 20.0).round() / 20.0;
+            Some(("pad_ds_touch_speed", s.pad_ds_touch_speed.to_string()))
+        }
         _ => None,
     }
 }
@@ -478,6 +496,8 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "pad_steer_linear" => s.pad_steer_linear,
         "pad_buttons" => s.pad_buttons,
         "pad_ds_lightbar" => s.pad_ds_lightbar,
+        "pad_ds_touch" => s.pad_ds_touch,
+        "pad_ds_battery" => s.pad_ds_battery,
         "right_stick_look" => s.right_stick_look,
         "ctrl_background" => s.ctrl_background,
         "arrows_switch_cams" => s.arrows_switch_cams,
@@ -861,6 +881,14 @@ fn toggle_set_graphics_and_controls(app: &mut App, id: &str, on: bool, bit: Stri
         "pad_ds_lightbar" => {
             app.settings.pad_ds_lightbar = on;
             Some(("pad_ds_lightbar", bit))
+        }
+        "pad_ds_touch" => {
+            app.settings.pad_ds_touch = on;
+            Some(("pad_ds_touch", bit))
+        }
+        "pad_ds_battery" => {
+            app.settings.pad_ds_battery = on;
+            Some(("pad_ds_battery", bit))
         }
         "right_stick_look" => {
             app.settings.right_stick_look = on;

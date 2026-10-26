@@ -2304,6 +2304,11 @@ pub fn settings_from_text_on(text: Option<&str>, phone: bool) -> Value {
     v["pad_buttons"] = json!(true);
     v["pad_ds_triggers"] = json!(1.0);
     v["pad_ds_lightbar"] = json!(true);
+    v["pad_ds_gyro"] = json!("off");
+    v["pad_ds_gyro_sens"] = json!(1.0);
+    v["pad_ds_touch"] = json!(true);
+    v["pad_ds_touch_speed"] = json!(1.0);
+    v["pad_ds_battery"] = json!(true);
     v["arrows_switch_cams"] = json!(true);
     v["steer_look_response"] = json!(0.25);
     v["head_idle"] = json!(0.0);
@@ -2410,9 +2415,11 @@ pub fn settings_from_text_on(text: Option<&str>, phone: bool) -> Value {
             "fov" => v[&k] = json!(val.parse::<f64>().map(|x| if x < 20.0 { 0.0 } else { x.min(120.0) }).unwrap_or(0.0)),
             "pad_steer_speed" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.8, 5.0)).unwrap_or(2.0)),
             "pad_deadzone" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 0.4)).unwrap_or(0.08)),
+            "pad_ds_gyro" => v[&k] = json!(match val.trim().to_ascii_lowercase().as_str() { "on" => "on", "touch" => "touch", _ => "off" }),
+            "pad_ds_gyro_sens" | "pad_ds_touch_speed" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.25, 3.0)).unwrap_or(1.0)),
             "pad_ds_triggers" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0)).unwrap_or(1.0)),
             "pad_type" => v[&k] = json!(match val.trim().to_ascii_lowercase().as_str() { "xbox" => "xbox", "ps4" => "ps4", "ps5" => "ps5", _ => "auto" }),
-            "camera_collision" | "right_stick_look" | "ctrl_background" | "pad_steer_linear" | "pad_buttons" | "pad_ds_lightbar" | "arrows_switch_cams" | "steer_look" | "head_tracking" | "head_tracking_invert_yaw" | "head_tracking_invert_pitch" | "head_tracking_invert_roll" | "head_tracking_invert_x" | "head_tracking_invert_y" | "head_tracking_invert_z" | "discord_status" | "launcher_rest" | "cross_platform_launcher" => v[&k] = json!(b(val)),
+            "camera_collision" | "right_stick_look" | "ctrl_background" | "pad_steer_linear" | "pad_buttons" | "pad_ds_lightbar" | "pad_ds_touch" | "pad_ds_battery" | "arrows_switch_cams" | "steer_look" | "head_tracking" | "head_tracking_invert_yaw" | "head_tracking_invert_pitch" | "head_tracking_invert_roll" | "head_tracking_invert_x" | "head_tracking_invert_y" | "head_tracking_invert_z" | "discord_status" | "launcher_rest" | "cross_platform_launcher" => v[&k] = json!(b(val)),
             // (how much of the mip chain an LED panel is held at, 0..4; a file from before
             // it was a number says 1 or 0)
             "led_mips" => v[&k] = json!(val.trim().parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 4.0)).unwrap_or(1.3)),
@@ -2797,6 +2804,8 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
     text.push_str(&format!("ctrl_background={}\n", b("ctrl_background", false)));
     text.push_str(&format!("pad_steer_speed={}\npad_deadzone={}\npad_buttons={}\n", f("pad_steer_speed", 2.0).clamp(0.8, 5.0), f("pad_deadzone", 0.08).clamp(0.0, 0.4), b("pad_buttons", true)));
     text.push_str(&format!("pad_ds_triggers={}\npad_ds_lightbar={}\n", f("pad_ds_triggers", 1.0).clamp(0.0, 1.0), b("pad_ds_lightbar", true)));
+    let gyro = match v.get("pad_ds_gyro").and_then(|x| x.as_str()).unwrap_or("off") { g @ ("on" | "touch") => g, _ => "off" };
+    text.push_str(&format!("pad_ds_gyro={gyro}\npad_ds_gyro_sens={}\npad_ds_touch={}\npad_ds_touch_speed={}\npad_ds_battery={}\n", f("pad_ds_gyro_sens", 1.0).clamp(0.25, 3.0), b("pad_ds_touch", true), f("pad_ds_touch_speed", 1.0).clamp(0.25, 3.0), b("pad_ds_battery", true)));
     text.push_str(&format!("pad_type={}\n", match v.get("pad_type").and_then(|x| x.as_str()).unwrap_or("auto") { t @ ("xbox" | "ps4" | "ps5") => t, _ => "auto" }));
     text.push_str(&format!("touch_door_mode={}\n", if v.get("touch_door_mode").and_then(|x| x.as_str()) == Some("direct") { "direct" } else { "standard" }));
     text.push_str(&format!("update_channel={}\n", if v.get("update_channel").and_then(|x| x.as_str()) == Some("beta") { "beta" } else { "stable" }));

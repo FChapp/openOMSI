@@ -103,6 +103,10 @@ impl App {
         });
         let prefs = omsi_input::dualsense::feedback::Prefs { triggers: self.settings.pad_ds_triggers, lightbar: self.settings.pad_ds_lightbar };
         ctl.dualsense_feedback(pad_bus, prefs, dt);
+        ctl.ds_input = omsi_input::dualsense::input::Prefs { gyro: omsi_input::dualsense::input::Gyro::from_setting(&self.settings.pad_ds_gyro), touch_mouse: self.settings.pad_ds_touch, touch_speed: self.settings.pad_ds_touch_speed };
+        if let Some(level) = ctl.dualsense_battery_low().filter(|_| self.settings.pad_ds_battery) {
+            self.service_msg = Some((omsi_ui::tr("DualSense battery low: {} %").replacen("{}", &level.to_string(), 1), 8.0));
+        }
         crate::game_controller_menu::frame(self);
         // In the photo mode the wheel, the pedals and the joystick do nothing: its camera
         // listens to a gamepad of its own (`photo::pad`), and a wheel's axes and buttons went
@@ -179,6 +183,11 @@ impl App {
         if analog.look != [0.0, 0.0] && self.menus.game_menu.is_none() && self.menus.chooser.is_none() && !self.paused {
             let k = LOOK_STICK_DEG_S * dt * self.settings.look_sens;
             self.look_by(analog.look[0] * k, analog.look[1] * k);
+        }
+        // a DualSense's gyroscope, in degrees a second: the head turns as the pad does
+        if analog.gyro != [0.0, 0.0] && self.menus.game_menu.is_none() && self.menus.chooser.is_none() && !self.paused {
+            let k = dt * self.settings.pad_ds_gyro_sens;
+            self.look_by(analog.gyro[0] * k, analog.gyro[1] * k);
         }
         // a gamepad's stick: a target the wheel turns towards at a hand's pace (from the
         // middle to the full lock in `pad_steer_speed` seconds), not the wheel's place

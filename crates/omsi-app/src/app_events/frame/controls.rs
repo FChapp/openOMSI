@@ -15,6 +15,7 @@ impl App {
         }
         // the game controllers: their axes this frame, their buttons' key actions
         let hwnd = self.window.as_deref().and_then(crate::controllers::window_handle);
+        let pad_bus = self.dualsense_bus();
         let process_prompt = self.has_process_permission_prompt();
         let ctl = self.input.controllers.get_or_insert_with(|| crate::controllers::Controllers::new(&self.args.root, hwnd));
         ctl.set_background(self.settings.ctrl_background);
@@ -100,6 +101,7 @@ impl App {
             micro: 0.0,
             dt,
         });
+        ctl.dualsense_feedback(pad_bus, dt);
         crate::game_controller_menu::frame(self);
         // In the photo mode the wheel, the pedals and the joystick do nothing: its camera
         // listens to a gamepad of its own (`photo::pad`), and a wheel's axes and buttons went
@@ -109,6 +111,48 @@ impl App {
             return (crate::controllers::Analog::default(), Vec::new());
         }
         (analog, actions)
+    }
+
+    /// What a DualSense shows of the player's bus (its rumble, triggers and lights): in the
+    /// views of the bus, not paused - as the force feedback.
+    fn dualsense_bus(&self) -> omsi_input::dualsense::feedback::Bus {
+        let Some(p) = self.player.as_ref().filter(|_| matches!(self.view.as_str(), "driver" | "outside" | "pax") && !self.paused) else {
+            return Default::default();
+        };
+        let v = &p.vehicle;
+        let on = |names: &[&str]| names.iter().any(|n| v.var(n).unwrap_or(0.0) > 0.5);
+        let indicator = if on(&["lights_sw_warnblinker"]) {
+            3
+        } else {
+            match v.var("lights_sw_blinker") {
+                Some(s) if (0.5..2.5).contains(&s) => s.round() as u8,
+                _ => match (on(&["lights_blinker_l"]), on(&["lights_blinker_r"])) {
+                    (true, true) => 3,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    _ => 0,
+                },
+            }
+        };
+        omsi_input::dualsense::feedback::Bus {
+            driving: true,
+            power: omsi_sim::startup::power_on(v),
+            indicator,
+            indicator_lamp: on(&["lights_blinker_l", "lights_blinker_r"]),
+            parking_brake: on(&["bremse_feststell", "parking_brake"]),
+            stop_brake: on(&["bremse_halte", "bremse_halte_sw", "stop_brake", "bus_stop_brake"]),
+            doors_open: crate::plugin_io::bus::doors_open(self).unwrap_or(false),
+            electrical_fault: on(&["elec_failure_general"]),
+            stop_requested: on(&["haltewunsch", "stop_request"]),
+            reverse: on(&["lights_rueckfahr"]),
+            gear: crate::plugin_io::bus::gear(self),
+            retarder: ["retarder", "retarder_level"].iter().any(|n| v.var(n).is_some()),
+            brake: v.physics.controls.brake.clamp(0.0, 1.0),
+            sliding: v.rigid.as_ref().is_some_and(|r| !r.holding),
+            kmh: v.physics.velocity_kmh().abs(),
+            crashes: v.crashes,
+            last_impact: v.last_impact,
+        }
     }
 
     /// The head turned by a stick, a gamepad's steering, and OMSI's mouse steering: the

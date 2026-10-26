@@ -101,7 +101,7 @@ impl App {
             micro: 0.0,
             dt,
         });
-        let prefs = omsi_input::dualsense::feedback::Prefs { triggers: self.settings.pad_ds_triggers, notch: self.settings.pad_ds_notch, lightbar: self.settings.pad_ds_lightbar };
+        let prefs = omsi_input::dualsense::feedback::Prefs { triggers: self.settings.pad_ds_triggers, lightbar: self.settings.pad_ds_lightbar };
         ctl.dualsense_feedback(pad_bus, prefs, dt);
         crate::game_controller_menu::frame(self);
         // In the photo mode the wheel, the pedals and the joystick do nothing: its camera
@@ -150,7 +150,6 @@ impl App {
             stop_requested: on(&["haltewunsch", "stop_request"]),
             reverse: on(&["lights_rueckfahr"]),
             gear: crate::plugin_io::bus::gear(self),
-            retarder: ["retarder", "retarder_level", "antrieb_retarder", "antrieb_retarderstufe"].iter().any(|n| v.var(n).is_some()),
             brake: v.physics.controls.brake.clamp(0.0, 1.0),
             throttle: v.physics.controls.throttle.clamp(0.0, 1.0),
             abs: ["bremse_abs_eingriff", "abs_eingriff"].iter().find_map(|n| v.var(n)).map(|x| x > 0.5),

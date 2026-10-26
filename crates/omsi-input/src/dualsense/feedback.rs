@@ -7,8 +7,8 @@
 //!   the road (a pothole, a kerb), the engine on its governor (the red of the rev counter,
 //!   bouncing as the fuel is cut), and small knocks: a door shutting, a gear going in, the
 //!   indicator's relay, a crash;
-//! - L2, the brake: free; on a bus with a retarder free over the retarder's travel and then a
-//!   notch where the brakes begin; it knocks while the ABS works (or, on a bus that does not
+//! - L2, the brake: free (a resistance of any strength was found tiring to drive with); it
+//!   knocks while the ABS works (or, on a bus that does not
 //!   say, when braked hard at speed or while the wheels slide);
 //! - R2, the throttle: free, and a wall while the stop brake or the parking brake holds the
 //!   bus (OMSI's buses cut the throttle then);
@@ -40,8 +40,6 @@ pub struct Bus {
     pub reverse: bool,
     /// The gear engaged where the script says (0 neutral).
     pub gear: Option<f32>,
-    /// The bus has a retarder (its first steps are on the brake pedal's first travel).
-    pub retarder: bool,
     /// The brake pedal, 0..1, and the throttle.
     pub brake: f32,
     pub throttle: f32,
@@ -64,8 +62,6 @@ pub struct Bus {
 pub struct Prefs {
     /// How hard the triggers push back (0 free .. 1).
     pub triggers: f32,
-    /// The notch on L2 where a retarder's travel ends.
-    pub notch: bool,
     /// The light bar and the player lights show the bus (else the pad's own).
     pub lightbar: bool,
 }
@@ -74,7 +70,6 @@ impl Default for Prefs {
     fn default() -> Prefs {
         Prefs {
             triggers: 1.0,
-            notch: true,
             lightbar: true,
         }
     }
@@ -137,7 +132,7 @@ impl Haptics {
         Output {
             rumble_left: motor(bump + red * 0.35 + self.knock[0]),
             rumble_right: motor(bump * 0.5 + red * 0.6 + self.knock[1]),
-            trigger_left: scaled(brake_trigger(bus, prefs.notch), prefs.triggers),
+            trigger_left: scaled(brake_trigger(bus), prefs.triggers),
             trigger_right: scaled(throttle_trigger(bus), prefs.triggers),
             release_leds: !prefs.lightbar,
             lightbar: self.lightbar(bus),
@@ -243,20 +238,14 @@ impl Haptics {
     }
 }
 
-/// L2: the ABS's knocking while it works; else free, with the notch where the retarder's
-/// travel ends on a bus that has one.
-fn brake_trigger(bus: &Bus, notch: bool) -> Trigger {
+/// L2: the ABS's knocking while it works, else free.
+fn brake_trigger(bus: &Bus) -> Trigger {
     // (the script's ABS, and braked hard at speed or the wheels sliding all the same: on a dry
     // road a script's ABS hardly ever works, and a stop that hard is still felt)
     let hard = bus.kmh > 10.0 && (bus.brake > 0.85 || (bus.sliding && bus.brake > 0.2));
     if (bus.abs == Some(true) || hard) && bus.brake > 0.05 {
         // (slow enough to be felt as knocks, not as a hum)
-        return Trigger::vibration(3, 8, 9);
-    }
-    if bus.retarder && notch {
-        // free over the retarder's travel (the first three zones), a soft step where the
-        // brakes begin, and the lightest spring after it
-        Trigger::Feedback([0, 0, 0, 3, 1, 1, 1, 1, 1, 1])
+        Trigger::vibration(3, 8, 9)
     } else {
         Trigger::Off
     }
@@ -457,19 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn the_brake_is_free_with_the_retarders_soft_notch_and_knocks_with_the_abs() {
-        assert_eq!(brake_trigger(&driving(), true), Trigger::Off);
-        let retarder = Bus {
-            retarder: true,
-            ..driving()
-        };
-        let Trigger::Feedback(z) = brake_trigger(&retarder, true) else {
-            panic!()
-        };
-        assert_eq!(&z[..3], &[0, 0, 0]);
-        assert!(z[3] > z[4] && z[3] <= 3);
-        // (the notch switched off in the settings)
-        assert_eq!(brake_trigger(&retarder, false), Trigger::Off);
+    fn the_brake_is_free_and_knocks_with_the_abs() {
+        assert_eq!(brake_trigger(&driving()), Trigger::Off);
         // the script's ABS at work
         let working = Bus {
             abs: Some(true),
@@ -477,10 +455,7 @@ mod tests {
             kmh: 50.0,
             ..driving()
         };
-        assert!(matches!(
-            brake_trigger(&working, true),
-            Trigger::Vibration { .. }
-        ));
+        assert!(matches!(brake_trigger(&working), Trigger::Vibration { .. }));
         // braked hard at speed even where the script's ABS does nothing, or sliding
         let braking = Bus {
             brake: 0.95,
@@ -488,38 +463,26 @@ mod tests {
             abs: Some(false),
             ..driving()
         };
-        assert!(matches!(
-            brake_trigger(&braking, true),
-            Trigger::Vibration { .. }
-        ));
+        assert!(matches!(brake_trigger(&braking), Trigger::Vibration { .. }));
         let slide = Bus {
             sliding: true,
             brake: 0.4,
             kmh: 40.0,
             ..driving()
         };
-        assert!(matches!(
-            brake_trigger(&slide, true),
-            Trigger::Vibration { .. }
-        ));
+        assert!(matches!(brake_trigger(&slide), Trigger::Vibration { .. }));
         assert_eq!(
-            brake_trigger(
-                &Bus {
-                    kmh: 5.0,
-                    ..braking
-                },
-                true
-            ),
+            brake_trigger(&Bus {
+                kmh: 5.0,
+                ..braking
+            }),
             Trigger::Off
         );
         assert_eq!(
-            brake_trigger(
-                &Bus {
-                    brake: 0.5,
-                    ..braking
-                },
-                true
-            ),
+            brake_trigger(&Bus {
+                brake: 0.5,
+                ..braking
+            }),
             Trigger::Off
         );
     }

@@ -101,7 +101,8 @@ impl App {
             micro: 0.0,
             dt,
         });
-        ctl.dualsense_feedback(pad_bus, dt);
+        let prefs = omsi_input::dualsense::feedback::Prefs { triggers: self.settings.pad_ds_triggers, notch: self.settings.pad_ds_notch, lightbar: self.settings.pad_ds_lightbar };
+        ctl.dualsense_feedback(pad_bus, prefs, dt);
         crate::game_controller_menu::frame(self);
         // In the photo mode the wheel, the pedals and the joystick do nothing: its camera
         // listens to a gamepad of its own (`photo::pad`), and a wheel's axes and buttons went

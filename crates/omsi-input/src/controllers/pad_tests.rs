@@ -37,6 +37,7 @@ fn disabling_automatic_look_keeps_driving_controls_and_assigned_look() {
             brake: Some(0.2),
             clutch: Some(0.4),
             look: assigned,
+            gyro: [0.0; 2],
         };
         analog.apply_default_gamepad_look(false, 1.0, -1.0);
         assert_eq!(analog.look, assigned);

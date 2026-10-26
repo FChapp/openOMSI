@@ -10,10 +10,13 @@
 //! battery, and the way back to the pad (rumble, adaptive triggers, lights).
 
 pub mod feedback;
+pub mod input;
 pub mod report;
 
 #[cfg(windows)]
 mod device;
+#[cfg(windows)]
+pub mod mouse;
 #[cfg(windows)]
 pub use device::{DualSenses, Pad};
 

@@ -31,6 +31,7 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "pad_steer_smooth" => s.pad_steer_smooth,
         "pad_steer_speed" => s.pad_steer_speed,
         "pad_deadzone" => s.pad_deadzone,
+        "pad_ds_triggers" => s.pad_ds_triggers,
         "ui_scale" => s.ui_scale,
         "chat_size" => s.chat_size,
         "ui_opacity" => s.ui_opacity,
@@ -164,6 +165,10 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
         "pad_deadzone" => {
             app.settings.pad_deadzone = (v.clamp(0.0, 0.4) * 100.0).round() / 100.0;
             Some(("pad_deadzone", app.settings.pad_deadzone.to_string()))
+        }
+        "pad_ds_triggers" => {
+            app.settings.pad_ds_triggers = (v.clamp(0.0, 1.0) * 10.0).round() / 10.0;
+            Some(("pad_ds_triggers", app.settings.pad_ds_triggers.to_string()))
         }
         "look_smoothing_ms" => {
             app.settings.look_smoothing_ms = v.round();
@@ -460,6 +465,8 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "steering_linear" => s.steering_linear,
         "pad_steer_linear" => s.pad_steer_linear,
         "pad_buttons" => s.pad_buttons,
+        "pad_ds_notch" => s.pad_ds_notch,
+        "pad_ds_lightbar" => s.pad_ds_lightbar,
         "right_stick_look" => s.right_stick_look,
         "ctrl_background" => s.ctrl_background,
         "arrows_switch_cams" => s.arrows_switch_cams,
@@ -839,6 +846,14 @@ fn toggle_set_graphics_and_controls(app: &mut App, id: &str, on: bool, bit: Stri
         "pad_buttons" => {
             app.settings.pad_buttons = on;
             Some(("pad_buttons", bit))
+        }
+        "pad_ds_notch" => {
+            app.settings.pad_ds_notch = on;
+            Some(("pad_ds_notch", bit))
+        }
+        "pad_ds_lightbar" => {
+            app.settings.pad_ds_lightbar = on;
+            Some(("pad_ds_lightbar", bit))
         }
         "right_stick_look" => {
             app.settings.right_stick_look = on;

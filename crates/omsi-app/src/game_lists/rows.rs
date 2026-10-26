@@ -123,6 +123,7 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "pad_steer_smooth" => (0..=30).map(|v| v as f32 * 10.0).collect(),
         "pad_steer_speed" => (8..=50).map(|v| v as f32 / 10.0).collect(),
         "pad_deadzone" => (0..=40).map(|v| v as f32 * 0.01).collect(),
+        "pad_ds_triggers" => (0..=10).map(|v| v as f32 * 0.1).collect(),
         "seat" => (-50..=50).map(|v| v as f32 / 100.0).collect(),
         "seat_pitch" => (-45..=45).map(|v| v as f32).collect(),
         "hour" => (0..24).map(|v| v as f32).collect(),

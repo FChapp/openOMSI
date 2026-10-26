@@ -88,6 +88,12 @@ fn gamepad_rows(app: &App, connected: &[crate::controllers::Connected]) -> Rows 
         crate::game_lists::switch_row(app, "pad_steer_linear", "Stick steers like a wheel", "The wheel where the stick points, as far at any speed: for a wheel the system calls an Xbox controller"),
         crate::game_lists::switch_row(app, "right_stick_look", "Right stick turns the view", "Switch off to keep the camera still while you steer"),
     ].into_iter().flatten());
+    out.push(("DualSense".into(), HEADING.into()));
+    out.extend([
+        crate::game_lists::slider_row(app, "pad_ds_triggers", "Adaptive triggers", "How hard L2 and R2 push back: the brakes holding the bus, the retarder's notch, the ABS (off: free triggers)", &|v| if v < 0.05 { "Off".to_string() } else { format!("{:.0} %", v * 100.0) }),
+        crate::game_lists::switch_row(app, "pad_ds_notch", "Retarder notch on the brake trigger", "On a bus with a retarder, L2 has a notch where the brakes begin"),
+        crate::game_lists::switch_row(app, "pad_ds_lightbar", "Light bar shows the bus", "Indicators, doors, brakes and faults on the pad's light; off: its own light"),
+    ].into_iter().flatten());
     out.push(("Buttons".into(), HEADING.into()));
     out.extend(crate::game_lists::switch_row(app, "pad_buttons", "Default buttons", "A gamepad with no buttons set up drives the cabin with these; set up its buttons under Devices to use your own"));
     out.push((crate::game_lists::row("Left stick / triggers", 'i', "Steer / brake, throttle", "Left stick steers, left trigger brakes, right trigger is the throttle", None), "noop".into()));

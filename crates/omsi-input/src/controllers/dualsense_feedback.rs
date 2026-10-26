@@ -1,5 +1,5 @@
 //! The DualSense's rumble, adaptive triggers and lights from the bus (`dualsense::feedback`),
-//! with the shaking the force feedback works out for every rumbling pad (`rumble_feedback`).
+//! with the wheels' jolt the force feedback holds (`feedback`).
 
 use super::*;
 use crate::dualsense::feedback::Bus;
@@ -24,10 +24,10 @@ impl Controllers {
                 ..bus
             };
             let scale = rumble_scale(&self.cfg, &name);
-            let out = self.haptics.frame(&bus, self.pad_rumble, scale, 1.0, dt);
+            let out = self.haptics.frame(&bus, self.pad_bump, scale, 1.0, dt);
             ds.set_output(out);
         }
         #[cfg(not(windows))]
-        let _ = (bus, dt, &self.haptics, self.pad_rumble);
+        let _ = (bus, dt, &self.haptics, self.pad_bump);
     }
 }

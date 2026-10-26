@@ -145,6 +145,11 @@ impl Program {
     pub fn constant(&self, name: &str) -> Option<f32> {
         with_lower(name, |k| self.consts.get(k).copied())
     }
+    /// Every `[const]` of the constfiles (lower case) with its value, for callers that look
+    /// for one a vehicle mod names its own way.
+    pub fn constants(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.consts.iter().map(|(k, v)| (k.as_str(), *v))
+    }
 
     /// Declare a variable (idempotent), returning its id.
     pub fn declare_var(&mut self, name: &str) -> VarId {

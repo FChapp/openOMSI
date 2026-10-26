@@ -54,6 +54,8 @@ const DEVICE_TABS: [&str; 4] = ["Device", "Axes and pedals", "Buttons", "Force f
 pub(crate) const COMMON_TABS: [&str; 4] = ["Devices", "Driving", "Gamepad", "Force feedback"];
 const AXES: [&str; 8] = ["X axis", "Y axis", "Z axis", "X rotation", "Y rotation", "Z rotation", "Slider 1", "Slider 2"];
 const PAD_TYPES: [&str; 4] = ["auto", "xbox", "ps4", "ps5"];
+const GYRO_MODES: [&str; 3] = ["off", "on", "touch"];
+const GYRO_TEXTS: [&str; 3] = ["Off", "Always", "While touching the touchpad"];
 type Rows = Vec<(String, String)>;
 
 /// The family the gamepad's buttons are named for: the setting, else the first pad found,
@@ -93,6 +95,14 @@ fn gamepad_rows(app: &App, connected: &[crate::controllers::Connected]) -> Rows 
         crate::game_lists::slider_row(app, "pad_ds_triggers", "Adaptive triggers", "How hard L2 and R2 push back: R2 while a brake holds the bus, L2 when the ABS works (off: free triggers)", &|v| if v < 0.05 { "Off".to_string() } else { format!("{:.0} %", v * 100.0) }),
         crate::game_lists::switch_row(app, "pad_ds_lightbar", "Light bar shows the bus", "Indicators, doors, brakes and faults on the pad's light; off: its own light"),
     ].into_iter().flatten());
+    let gyro = GYRO_MODES.iter().position(|g| *g == app.settings.pad_ds_gyro).map_or("Off", |k| GYRO_TEXTS[k]);
+    out.push((crate::game_lists::row("Gyro camera", 'o', gyro, "Turn the view by turning the DualSense (or only while a finger rests on the touchpad)", None), "pad_ds_gyro".into()));
+    out.extend([
+        crate::game_lists::slider_row(app, "pad_ds_gyro_sens", "Gyro sensitivity", "How far the view turns for a turn of the pad", &|v| format!("x{v:.2}")),
+        crate::game_lists::switch_row(app, "pad_ds_touch", "Touchpad as mouse", "Slide on the touchpad to move the cursor, press it to click (the cockpit's switches, the menus)"),
+        crate::game_lists::slider_row(app, "pad_ds_touch_speed", "Touchpad speed", "How fast the cursor follows the finger", &|v| format!("x{v:.2}")),
+        crate::game_lists::switch_row(app, "pad_ds_battery", "Low battery warning", "A message when the DualSense's battery falls to 20 % and to 10 %"),
+    ].into_iter().flatten());
     out.push(("Buttons".into(), HEADING.into()));
     out.extend(crate::game_lists::switch_row(app, "pad_buttons", "Default buttons", "A gamepad with no buttons set up drives the cabin with these; set up its buttons under Devices to use your own"));
     out.push((crate::game_lists::row("Left stick / triggers", 'i', "Steer / brake, throttle", "Left stick steers, left trigger brakes, right trigger is the throttle", None), "noop".into()));
@@ -100,6 +110,15 @@ fn gamepad_rows(app: &App, connected: &[crate::controllers::Connected]) -> Rows 
     for b in gamepad_profile::PRESET_BUTTONS {
         let Some(action) = gamepad_profile::default_action(b) else { continue };
         out.push((crate::game_lists::row(kind.label(b), 'i', gamepad_profile::action_text(action), "", None), "noop".into()));
+    }
+    // (a PlayStation pad's own: the PS button, and the DualSense's microphone button)
+    let sony: &[(&str, &str)] = match kind {
+        PadKind::Ps5 => &[("PS", "photo_mode"), ("Microphone", "voice_radio")],
+        PadKind::Ps4 => &[("PS", "photo_mode")],
+        PadKind::Xbox => &[],
+    };
+    for (button, action) in sony {
+        out.push((crate::game_lists::row(button, 'i', gamepad_profile::action_text(action), "", None), "noop".into()));
     }
     out
 }
@@ -340,6 +359,12 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
             let to = step(PAD_TYPES.iter().position(|t| *t == app.settings.pad_type).unwrap_or(0), PAD_TYPES.len(), mv);
             app.settings.pad_type = PAD_TYPES[to].into();
             crate::game_lists::remember_setting("pad_type", PAD_TYPES[to]);
+            return Some(kind.clone());
+        }
+        if verb == "pad_ds_gyro" {
+            let to = step(GYRO_MODES.iter().position(|g| *g == app.settings.pad_ds_gyro).unwrap_or(0), GYRO_MODES.len(), mv);
+            app.settings.pad_ds_gyro = GYRO_MODES[to].into();
+            crate::game_lists::remember_setting("pad_ds_gyro", GYRO_MODES[to]);
             return Some(kind.clone());
         }
         if crate::game_lists::option_do(app, verb, arg, mv) { return Some(kind.clone()); }

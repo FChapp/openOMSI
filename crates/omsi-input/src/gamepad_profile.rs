@@ -147,7 +147,21 @@ pub fn action_text(action: &str) -> &'static str {
         "open_menu" => "Open / close the main menu",
         "sim_pause" => "Pause",
         "view_reset_all_directions" => "Reset all view directions",
+        "photo_mode" => "Photo mode",
+        "voice_radio" => "Talk on the radio (hold)",
         _ => "",
+    }
+}
+
+/// The default action of a Sony pad's button as DirectInput numbers it: its gamepad button's
+/// (`sony_direct_input_button`), else one of the DualSense's own - the PS button the photo
+/// mode, the microphone button (14, read over HID: `dualsense`) the radio's push to talk.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn sony_direct_input_action(n: usize, hat_base: usize) -> Option<&'static str> {
+    match n {
+        12 => Some("photo_mode"),
+        14 => Some("voice_radio"),
+        _ => sony_direct_input_button(n, hat_base).and_then(default_action),
     }
 }
 
@@ -236,5 +250,9 @@ mod tests {
         assert_eq!(sony_direct_input_button(1, 128), Some(Button::South));
         assert_eq!(sony_direct_input_button(6, 128), None); // L2 is an axis
         assert_eq!(sony_direct_input_button(130, 128), Some(Button::DPadDown));
+        assert_eq!(sony_direct_input_action(1, 128), Some("doors_all"));
+        assert_eq!(sony_direct_input_action(12, 128), Some("photo_mode"));
+        assert_eq!(sony_direct_input_action(14, 128), Some("voice_radio"));
+        assert_eq!(sony_direct_input_action(13, 128), None);
     }
 }

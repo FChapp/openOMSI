@@ -2,8 +2,10 @@
 //! after they were switched off), reads their reports as they come (some 250 a second over
 //! USB, up to 1000 over Bluetooth) and sends them what the game wants of them. The game's
 //! frame only takes the last state and the buttons that moved, and never waits for a pad.
+//! The output reports go out on a thread of each pad's own (`Writer`): a write over Bluetooth
+//! can take milliseconds, which the sticks' reports must not wait for.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,12 +18,11 @@ const SCAN: Duration = Duration::from_secs(2);
 /// A pad that sent nothing for this long was switched off or went out of range (Windows
 /// keeps a Bluetooth pad's handle open a while after).
 const SILENT: Duration = Duration::from_secs(2);
-/// How long the thread sleeps between two rounds of reading.
-const TICK: Duration = Duration::from_millis(2);
+/// How long a read waits for a pad's next report (one pad: the thread wakes as it comes).
+const WAIT_MS: i32 = 10;
 /// The least time between two output reports to a pad: the game's frames change the rumble
-/// up to some hundred times a second, and a write over Bluetooth can take milliseconds,
-/// which the pad's reports (read on the same thread) would wait for.
-const OUTPUT_EVERY: Duration = Duration::from_millis(12);
+/// up to some hundred times a second, more than a pad over Bluetooth needs.
+const OUTPUT_EVERY: Duration = Duration::from_millis(10);
 
 /// A pad as the game sees it: its name, ids, how it is connected and its last full report.
 #[derive(Clone, Debug)]
@@ -105,9 +106,61 @@ impl Drop for DualSenses {
     }
 }
 
+/// The thread that writes a pad's output reports, on a handle of its own; when it falls
+/// behind, only the latest report goes out. Dropping it waits for the last one.
+struct Writer {
+    tx: Option<mpsc::Sender<Vec<u8>>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Writer {
+    fn start(api: &HidApi, path: &std::ffi::CStr, name: &str) -> Option<Writer> {
+        let dev = api
+            .open_path(path)
+            .map_err(|e| log::warn!("DualSense: {name} could not be opened for its output: {e}"))
+            .ok()?;
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let name = name.to_string();
+        let thread = thread::Builder::new()
+            .name("dualsense output".into())
+            .spawn(move || {
+                while let Ok(mut r) = rx.recv() {
+                    while let Ok(newer) = rx.try_recv() {
+                        r = newer;
+                    }
+                    if let Err(e) = dev.write(&r) {
+                        log::warn!("DualSense: {name} took no output report: {e}");
+                    }
+                }
+            })
+            .ok()?;
+        Some(Writer {
+            tx: Some(tx),
+            thread: Some(thread),
+        })
+    }
+
+    fn send(&self, report: Vec<u8>) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(report);
+        }
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.tx.take();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
 /// One pad open.
 struct Open {
     dev: HidDevice,
+    /// None: the launcher, which only reads the pads.
+    writer: Option<Writer>,
     path: std::ffi::CString,
     pad: Pad,
     buttons: Buttons,
@@ -122,7 +175,7 @@ struct Open {
 }
 
 impl Open {
-    fn new(api: &HidApi, info: &hidapi::DeviceInfo) -> Option<Open> {
+    fn new(api: &HidApi, info: &hidapi::DeviceInfo, write: bool) -> Option<Open> {
         let dev = info
             .open_device(api)
             .map_err(|e| log::warn!("DualSense: could not open it: {e}"))
@@ -161,8 +214,14 @@ impl Open {
             .to_string();
         log::info!("DualSense: {name} over {transport:?}, firmware {firmware:#06x}, read over HID");
         let input = idle_input();
+        let writer = if write {
+            Writer::start(api, info.path(), &name)
+        } else {
+            None
+        };
         Some(Open {
             dev,
+            writer,
             path: info.path().to_owned(),
             pad: Pad {
                 name,
@@ -180,11 +239,15 @@ impl Open {
         })
     }
 
-    /// Every report waiting; the buttons that moved go to `events`. False: the pad is gone.
-    fn read(&mut self, events: &mut Vec<(String, usize, bool)>) -> bool {
+    /// Every report waiting, the first waited for up to `wait_ms`; the buttons that moved go
+    /// to `events`. False: the pad is gone.
+    fn read(&mut self, wait_ms: i32, events: &mut Vec<(String, usize, bool)>) -> bool {
         let mut buf = [0u8; 128];
+        let mut wait = wait_ms;
         loop {
-            match self.dev.read_timeout(&mut buf, 0) {
+            let read = self.dev.read_timeout(&mut buf, wait);
+            wait = 0;
+            match read {
                 Ok(0) => return self.heard.elapsed() < SILENT,
                 Ok(n) => {
                     self.heard = Instant::now();
@@ -222,8 +285,8 @@ impl Open {
         };
         let r = full.report(self.pad.transport, self.seq);
         self.seq = (self.seq + 1) & 0x0f;
-        if let Err(e) = self.dev.write(&r) {
-            log::warn!("DualSense: {} took no output report: {e}", self.pad.name);
+        if let Some(w) = &self.writer {
+            w.send(r);
         }
         self.sent = Some(*out);
         self.sent_at = Instant::now();
@@ -272,11 +335,12 @@ fn run(shared: &Mutex<Shared>, write: bool) {
                 .filter(|d| is_dualsense(d) && !open.iter().any(|o| o.path.as_c_str() == d.path()))
                 .cloned()
                 .collect();
-            open.extend(found.iter().filter_map(|d| Open::new(&api, d)));
+            open.extend(found.iter().filter_map(|d| Open::new(&api, d, write)));
         }
         let mut events = Vec::new();
+        let wait = if open.len() == 1 { WAIT_MS } else { 0 };
         open.retain_mut(|o| {
-            let alive = o.read(&mut events);
+            let alive = o.read(wait, &mut events);
             if !alive {
                 o.moved(Buttons::default(), &mut events);
             }
@@ -295,9 +359,11 @@ fn run(shared: &Mutex<Shared>, write: bool) {
                     release_leds: true,
                     ..Output::default()
                 };
-                let r = release.report(o.pad.transport, o.seq);
-                let _ = o.dev.write(&r);
+                if let Some(w) = &o.writer {
+                    w.send(release.report(o.pad.transport, o.seq));
+                }
             }
+            // (each writer waited for as it is dropped)
             return;
         }
         if let Some(out) = output.filter(|_| write) {
@@ -308,6 +374,10 @@ fn run(shared: &Mutex<Shared>, write: bool) {
                 o.send(&out);
             }
         }
-        thread::sleep(TICK);
+        match open.len() {
+            0 => thread::sleep(Duration::from_millis(20)),
+            1 => {}
+            _ => thread::sleep(Duration::from_millis(1)),
+        }
     }
 }

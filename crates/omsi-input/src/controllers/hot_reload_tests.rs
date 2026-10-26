@@ -22,6 +22,8 @@ fn no_hardware() -> Devices {
         button_devices: crate::evdev_buttons::ButtonDevices::new(),
         #[cfg(windows)]
         di: None,
+        #[cfg(windows)]
+        dualsense: None,
         #[cfg(target_os = "macos")]
         gc: crate::mac_game_controller::GcPads::new(),
         #[cfg(target_os = "macos")]

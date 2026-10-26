@@ -39,3 +39,9 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString"] }
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "hid"] }
 objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerButtonInput", "GCControllerDirectionPad", "GCControllerAxisInput", "GCProductCategories", "block2"] }
+
+# `examples/dualsense_probe`: raw HID to a DualSense (Windows' own HID API, no C library)
+[target.'cfg(windows)'.dev-dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+[target.'cfg(not(windows))'.dev-dependencies]
+hidapi = "2.6.7"

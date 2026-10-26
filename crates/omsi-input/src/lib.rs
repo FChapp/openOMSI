@@ -10,6 +10,7 @@ pub mod auto_setup;
 pub mod background;
 pub mod controllers;
 pub mod describe;
+pub mod dualsense;
 pub mod ffb_calibration;
 pub mod gamepad_profile;
 pub mod head_filter;

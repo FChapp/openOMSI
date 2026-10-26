@@ -207,7 +207,6 @@ const driving = {
         { type: 'toggle', key: 'pad_steer_linear', label: 'Stick steers like a wheel (a wheel seen as a gamepad)' },
         { type: 'section', title: 'DualSense' },
         { type: 'slider', key: 'pad_ds_triggers', label: 'Adaptive triggers', min: 0, max: 1, step: 0.1, def: 1, format: (v) => (v < 0.05 ? t('Off') : `${Math.round(v * 100)} %`), store: r1 },
-        { type: 'toggle', key: 'pad_ds_notch', label: 'Retarder notch on the brake trigger' },
         { type: 'toggle', key: 'pad_ds_lightbar', label: 'Light bar shows the bus (indicators, doors, brakes)' },
         { type: 'section', title: 'Force feedback' },
         { type: 'toggle', key: 'ff_enabled', label: 'Force feedback and vibration' },

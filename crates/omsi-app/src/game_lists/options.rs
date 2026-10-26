@@ -465,7 +465,6 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "steering_linear" => s.steering_linear,
         "pad_steer_linear" => s.pad_steer_linear,
         "pad_buttons" => s.pad_buttons,
-        "pad_ds_notch" => s.pad_ds_notch,
         "pad_ds_lightbar" => s.pad_ds_lightbar,
         "right_stick_look" => s.right_stick_look,
         "ctrl_background" => s.ctrl_background,
@@ -846,10 +845,6 @@ fn toggle_set_graphics_and_controls(app: &mut App, id: &str, on: bool, bit: Stri
         "pad_buttons" => {
             app.settings.pad_buttons = on;
             Some(("pad_buttons", bit))
-        }
-        "pad_ds_notch" => {
-            app.settings.pad_ds_notch = on;
-            Some(("pad_ds_notch", bit))
         }
         "pad_ds_lightbar" => {
             app.settings.pad_ds_lightbar = on;

@@ -59,6 +59,27 @@ pub struct Bus {
     pub last_impact: f32,
 }
 
+/// What the player chose for the pad (the settings' `pad_ds_*`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Prefs {
+    /// How hard the triggers push back (0 free .. 1).
+    pub triggers: f32,
+    /// The notch on L2 where a retarder's travel ends.
+    pub notch: bool,
+    /// The light bar and the player lights show the bus (else the pad's own).
+    pub lightbar: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Prefs {
+        Prefs {
+            triggers: 1.0,
+            notch: true,
+            lightbar: true,
+        }
+    }
+}
+
 /// Jolts smaller than this are the road's own unevenness, not felt on the pad.
 const BUMP_FLOOR: f32 = 0.15;
 /// The engine buzzes from this share of its governor's speed, fully at the governor.
@@ -91,14 +112,7 @@ impl Haptics {
     /// The pad's output this frame. `bump`: the wheels' jolt as the force feedback holds it
     /// (0..1); `vibration`: the player's strength for the pad (0..2); `triggers`: for the
     /// triggers (0 off .. 1).
-    pub fn frame(
-        &mut self,
-        bus: &Bus,
-        bump: f32,
-        vibration: f32,
-        triggers: f32,
-        dt: f32,
-    ) -> Output {
+    pub fn frame(&mut self, bus: &Bus, bump: f32, vibration: f32, prefs: Prefs, dt: f32) -> Output {
         let dt = dt.clamp(0.0, 0.25);
         self.t = (self.t + dt) % 3600.0;
         for k in &mut self.knock {
@@ -123,8 +137,9 @@ impl Haptics {
         Output {
             rumble_left: motor(bump + red * 0.35 + self.knock[0]),
             rumble_right: motor(bump * 0.5 + red * 0.6 + self.knock[1]),
-            trigger_left: scaled(brake_trigger(bus), triggers),
-            trigger_right: scaled(throttle_trigger(bus), triggers),
+            trigger_left: scaled(brake_trigger(bus, prefs.notch), prefs.triggers),
+            trigger_right: scaled(throttle_trigger(bus), prefs.triggers),
+            release_leds: !prefs.lightbar,
             lightbar: self.lightbar(bus),
             player_leds: player_leds(bus),
             mic_led: if bus.stop_requested {
@@ -230,20 +245,18 @@ impl Haptics {
 
 /// L2: the ABS's knocking while it works; else free, with the notch where the retarder's
 /// travel ends on a bus that has one.
-fn brake_trigger(bus: &Bus) -> Trigger {
-    let abs = match bus.abs {
-        Some(working) => working,
-        // (a bus that does not say: braked hard at speed, or the wheels sliding)
-        None => bus.kmh > 10.0 && (bus.brake > 0.85 || (bus.sliding && bus.brake > 0.2)),
-    };
-    if abs && bus.brake > 0.05 {
+fn brake_trigger(bus: &Bus, notch: bool) -> Trigger {
+    // (the script's ABS, and braked hard at speed or the wheels sliding all the same: on a dry
+    // road a script's ABS hardly ever works, and a stop that hard is still felt)
+    let hard = bus.kmh > 10.0 && (bus.brake > 0.85 || (bus.sliding && bus.brake > 0.2));
+    if (bus.abs == Some(true) || hard) && bus.brake > 0.05 {
         // (slow enough to be felt as knocks, not as a hum)
         return Trigger::vibration(3, 8, 9);
     }
-    if bus.retarder {
-        // free over the retarder's travel (the first three zones), a step where the brakes
-        // begin, and only a light spring after it
-        Trigger::Feedback([0, 0, 0, 5, 2, 2, 2, 2, 2, 2])
+    if bus.retarder && notch {
+        // free over the retarder's travel (the first three zones), a soft step where the
+        // brakes begin, and the lightest spring after it
+        Trigger::Feedback([0, 0, 0, 3, 1, 1, 1, 1, 1, 1])
     } else {
         Trigger::Off
     }
@@ -316,13 +329,13 @@ mod tests {
     }
 
     fn frame(h: &mut Haptics, bus: &Bus, dt: f32) -> Output {
-        h.frame(bus, 0.0, 1.0, 1.0, dt)
+        h.frame(bus, 0.0, 1.0, Prefs::default(), dt)
     }
 
     #[test]
     fn at_rest_the_pad_is_warm_white_and_still() {
         let mut h = Haptics::default();
-        let out = h.frame(&Bus::default(), 1.0, 1.0, 1.0, 0.016);
+        let out = h.frame(&Bus::default(), 1.0, 1.0, Prefs::default(), 0.016);
         assert_eq!(out.lightbar, WARM_WHITE);
         assert_eq!((out.rumble_left, out.rumble_right), (0, 0));
         assert_eq!(
@@ -342,7 +355,7 @@ mod tests {
             ..driving()
         };
         for _ in 0..100 {
-            let out = h.frame(&cruising, 0.1, 1.0, 1.0, 0.016);
+            let out = h.frame(&cruising, 0.1, 1.0, Prefs::default(), 0.016);
             assert_eq!((out.rumble_left, out.rumble_right), (0, 0));
         }
     }
@@ -350,9 +363,21 @@ mod tests {
     #[test]
     fn only_real_jolts_of_the_road_are_felt() {
         let mut h = Haptics::default();
-        assert_eq!(h.frame(&driving(), 0.1, 1.0, 1.0, 0.016).rumble_left, 0);
-        assert!(h.frame(&driving(), 0.8, 1.0, 1.0, 0.016).rumble_left > 150);
-        assert_eq!(h.frame(&driving(), 0.8, 0.0, 1.0, 0.016).rumble_left, 0);
+        assert_eq!(
+            h.frame(&driving(), 0.1, 1.0, Prefs::default(), 0.016)
+                .rumble_left,
+            0
+        );
+        assert!(
+            h.frame(&driving(), 0.8, 1.0, Prefs::default(), 0.016)
+                .rumble_left
+                > 150
+        );
+        assert_eq!(
+            h.frame(&driving(), 0.8, 0.0, Prefs::default(), 0.016)
+                .rumble_left,
+            0
+        );
     }
 
     #[test]
@@ -432,51 +457,84 @@ mod tests {
     }
 
     #[test]
-    fn the_brake_is_free_with_the_retarders_notch_and_knocks_with_the_abs() {
-        assert_eq!(brake_trigger(&driving()), Trigger::Off);
-        let notch = brake_trigger(&Bus {
+    fn the_brake_is_free_with_the_retarders_soft_notch_and_knocks_with_the_abs() {
+        assert_eq!(brake_trigger(&driving(), true), Trigger::Off);
+        let retarder = Bus {
             retarder: true,
             ..driving()
-        });
-        let Trigger::Feedback(z) = notch else {
-            panic!("{notch:?}")
+        };
+        let Trigger::Feedback(z) = brake_trigger(&retarder, true) else {
+            panic!()
         };
         assert_eq!(&z[..3], &[0, 0, 0]);
-        assert!(z[3] > z[4]);
-        // the script says when its ABS works
-        let braking = Bus {
-            brake: 0.95,
-            kmh: 50.0,
-            ..driving()
-        };
-        assert_eq!(
-            brake_trigger(&Bus {
-                abs: Some(false),
-                ..braking
-            }),
-            Trigger::Off
-        );
+        assert!(z[3] > z[4] && z[3] <= 3);
+        // (the notch switched off in the settings)
+        assert_eq!(brake_trigger(&retarder, false), Trigger::Off);
+        // the script's ABS at work
         let working = Bus {
             abs: Some(true),
             brake: 0.5,
-            ..braking
+            kmh: 50.0,
+            ..driving()
         };
-        assert!(matches!(brake_trigger(&working), Trigger::Vibration { .. }));
-        // else braking hard at speed, or sliding
-        assert!(matches!(brake_trigger(&braking), Trigger::Vibration { .. }));
+        assert!(matches!(
+            brake_trigger(&working, true),
+            Trigger::Vibration { .. }
+        ));
+        // braked hard at speed even where the script's ABS does nothing, or sliding
+        let braking = Bus {
+            brake: 0.95,
+            kmh: 50.0,
+            abs: Some(false),
+            ..driving()
+        };
+        assert!(matches!(
+            brake_trigger(&braking, true),
+            Trigger::Vibration { .. }
+        ));
         let slide = Bus {
             sliding: true,
             brake: 0.4,
             kmh: 40.0,
             ..driving()
         };
-        assert!(matches!(brake_trigger(&slide), Trigger::Vibration { .. }));
+        assert!(matches!(
+            brake_trigger(&slide, true),
+            Trigger::Vibration { .. }
+        ));
         assert_eq!(
-            brake_trigger(&Bus {
-                kmh: 5.0,
-                ..braking
-            }),
+            brake_trigger(
+                &Bus {
+                    kmh: 5.0,
+                    ..braking
+                },
+                true
+            ),
             Trigger::Off
+        );
+        assert_eq!(
+            brake_trigger(
+                &Bus {
+                    brake: 0.5,
+                    ..braking
+                },
+                true
+            ),
+            Trigger::Off
+        );
+    }
+
+    #[test]
+    fn the_light_bar_can_be_left_to_the_pad() {
+        let mut h = Haptics::default();
+        let prefs = Prefs {
+            lightbar: false,
+            ..Prefs::default()
+        };
+        assert!(h.frame(&driving(), 0.0, 1.0, prefs, 0.016).release_leds);
+        assert!(
+            !h.frame(&driving(), 0.0, 1.0, Prefs::default(), 0.016)
+                .release_leds
         );
     }
 

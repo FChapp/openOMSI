@@ -235,6 +235,10 @@ struct SettingsPage: View {
             SettingSlider(label: "Stick steering smoothing", key: "pad_steer_smooth", range: 0 ... 300, step: 10, fallback: 120, round: 1) { offMs($0) }
             SettingSlider(label: "Stick dead zone", key: "pad_deadzone", range: 0 ... 0.4, step: 0.01, fallback: 0.08, round: 0.01) { String(format: "%.0f %%", $0 * 100) }
             SettingToggle(label: "Stick steers like a wheel (a wheel seen as a gamepad)", key: "pad_steer_linear")
+            SectionTitle("DualSense").padding(.top, 8)
+            SettingSlider(label: "Adaptive triggers", key: "pad_ds_triggers", range: 0 ... 1, step: 0.1, fallback: 1, round: 0.1) { $0 < 0.05 ? off : String(format: "%.0f %%", $0 * 100) }
+            SettingToggle(label: "Retarder notch on the brake trigger", key: "pad_ds_notch", fallback: true)
+            SettingToggle(label: "Light bar shows the bus (indicators, doors, brakes)", key: "pad_ds_lightbar", fallback: true)
             SectionTitle("Force feedback").padding(.top, 8)
             SettingToggle(label: "Force feedback and vibration", key: "ff_enabled", fallback: true)
             SettingToggle(label: "Invert force feedback by default", key: "ff_invert")

@@ -86,6 +86,21 @@ fn gamepad_settings_round_trip_and_are_clamped() {
     assert_eq!(Settings::from_text("pad_steer_speed=99\n").pad_steer_speed, 5.0);
 }
 
+/// A DualSense's settings are kept, the triggers' strength held in 0..1, and the game and
+/// the launcher write and read them alike.
+#[test]
+fn dualsense_settings_round_trip_and_are_clamped() {
+    let d = Settings::default();
+    assert_eq!((d.pad_ds_triggers, d.pad_ds_notch, d.pad_ds_lightbar), (1.0, true, true));
+    let s = Settings::from_text("pad_ds_triggers=0.4\npad_ds_notch=0\npad_ds_lightbar=0\n");
+    let back = Settings::from_text(&s.to_text());
+    assert_eq!((back.pad_ds_triggers, back.pad_ds_notch, back.pad_ds_lightbar), (0.4, false, false));
+    assert_eq!(Settings::from_text("pad_ds_triggers=7\n").pad_ds_triggers, 1.0);
+    let launcher = omsi_launcher_lib::settings_from_text(Some("pad_ds_triggers=0.4\npad_ds_notch=0\n"));
+    let game = Settings::from_text(&omsi_launcher_lib::settings_to_text(&launcher, None));
+    assert_eq!((game.pad_ds_triggers, game.pad_ds_notch, game.pad_ds_lightbar), (0.4, false, true));
+}
+
 /// The enhanced clouds' quality is kept, `high` unless the file says `low`.
 #[test]
 fn street_light_round_trips_and_reaches_the_renderer() {

@@ -2,12 +2,12 @@
 //! with the wheels' jolt the force feedback holds (`feedback`).
 
 use super::*;
-use crate::dualsense::feedback::Bus;
+use crate::dualsense::feedback::{Bus, Prefs};
 
 impl Controllers {
     /// After `feedback`: what the DualSenses show of `bus` this frame (Windows, where they
     /// are read over HID; elsewhere nothing yet).
-    pub fn dualsense_feedback(&mut self, bus: Bus, dt: f32) {
+    pub fn dualsense_feedback(&mut self, bus: Bus, prefs: Prefs, dt: f32) {
         #[cfg(windows)]
         {
             let Some(ds) = self.devices.dualsense.as_ref() else {
@@ -24,10 +24,10 @@ impl Controllers {
                 ..bus
             };
             let scale = rumble_scale(&self.cfg, &name);
-            let out = self.haptics.frame(&bus, self.pad_bump, scale, 1.0, dt);
+            let out = self.haptics.frame(&bus, self.pad_bump, scale, prefs, dt);
             ds.set_output(out);
         }
         #[cfg(not(windows))]
-        let _ = (bus, dt, &self.haptics, self.pad_bump);
+        let _ = (bus, prefs, dt, &self.haptics, self.pad_bump);
     }
 }

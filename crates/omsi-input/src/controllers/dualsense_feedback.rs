@@ -23,10 +23,8 @@ impl Controllers {
                 driving: bus.driving && on,
                 ..bus
             };
-            let (amp, period) = self.pad_rumble;
-            let out =
-                self.haptics
-                    .frame(&bus, amp, period, rumble_scale(&self.cfg, &name), 1.0, dt);
+            let scale = rumble_scale(&self.cfg, &name);
+            let out = self.haptics.frame(&bus, self.pad_rumble, scale, 1.0, dt);
             ds.set_output(out);
         }
         #[cfg(not(windows))]

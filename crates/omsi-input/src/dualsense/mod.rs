@@ -9,6 +9,7 @@
 //! The same reports carry what DirectInput never had: the touchpad, the motion sensors, the
 //! battery, and the way back to the pad (rumble, adaptive triggers, lights).
 
+pub mod feedback;
 pub mod report;
 
 #[cfg(windows)]

@@ -1238,10 +1238,9 @@ pub struct Controllers {
     /// The rumble playing (`FF_Vib_Amp` and `FF_Vib_Period` of the bus), rebuilt when
     /// either changes.
     rumble: Vec<(gilrs::GamepadId, gilrs::ff::Effect, f32, f32, f32)>,
-    /// The shaking for a DualSense (the engine's buzz on a trembling of its own, without the
-    /// road's grain), and the pad's state over frames
-    pad_rumble: crate::dualsense::feedback::Shaking,
-    pad_micro: Micro,
+    /// The wheels' jolt for a DualSense (none while the force feedback is off), and the pad's
+    /// state over frames
+    pad_bump: f32,
     haptics: crate::dualsense::feedback::Haptics,
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     wheel: Option<crate::evdev_ff::Wheel>,
@@ -1315,7 +1314,7 @@ impl Controllers {
     }
 
     fn with_devices(devices: Devices, cfg: Vec<DeviceCfg>) -> Controllers {
-        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), pad_rumble: Default::default(), pad_micro: Micro::default(), haptics: Default::default(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
+        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), pad_bump: 0.0, haptics: Default::default(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
     }
 
     /// Whether this device steers the bus (set up so, or steering now): the photo mode's camera takes none for its gamepad (a wheel turned it).
@@ -1587,7 +1586,6 @@ impl Controllers {
     /// than cut. Other devices get the vibration as rumble.
     pub fn feedback(&mut self, f: FfInput) {
         let on = self.enabled && f.on && self.ff_enabled && self.focused;
-        self.pad_rumble = Default::default();
         let mut f = f;
         if on {
             // The bus body reacts to road and tyre forces every physics step. A short
@@ -1637,10 +1635,7 @@ impl Controllers {
         f.vib_amp = vib_amp;
         f.vib_period = vib_period;
         f.micro = micro;
-        if on {
-            let engine = self.pad_micro.sample(f.dt, f.kmh, f.street_cond, f.engine_rpm, f.engine_load, 0.0, self.ff_engine);
-            self.pad_rumble = crate::dualsense::feedback::Shaking { script: vib_amp, period: vib_period, bump: self.ff_bump, engine };
-        }
+        self.pad_bump = if on { self.ff_bump } else { 0.0 };
         if self.ff_source_logged.as_deref() != self.steer.as_ref().map(|s| s.0.as_str()) {
             self.ff_source_logged = self.steer.as_ref().map(|s| s.0.clone());
             if let Some((name, _, _, effect)) = self.steer.as_ref() {

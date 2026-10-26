@@ -121,12 +121,14 @@ impl App {
         };
         let v = &p.vehicle;
         let on = |names: &[&str]| names.iter().any(|n| v.var(n).unwrap_or(0.0) > 0.5);
+        let lamps = indicator_lamps(v);
+        let lamp = |k: usize| lamps.as_ref().is_some_and(|l| v.var(if k == 0 { &l.0 } else { &l.1 }).unwrap_or(0.0) > 0.5);
         let indicator = if on(&["lights_sw_warnblinker"]) {
             3
         } else {
             match v.var("lights_sw_blinker") {
                 Some(s) if (0.5..2.5).contains(&s) => s.round() as u8,
-                _ => match (on(&["lights_blinker_l"]), on(&["lights_blinker_r"])) {
+                _ => match (lamp(0), lamp(1)) {
                     (true, true) => 3,
                     (true, false) => 1,
                     (false, true) => 2,
@@ -138,7 +140,7 @@ impl App {
             driving: true,
             power: omsi_sim::startup::power_on(v),
             indicator,
-            indicator_lamp: on(&["lights_blinker_l", "lights_blinker_r"]),
+            indicator_lamp: lamps.is_some().then(|| lamp(0) || lamp(1)),
             parking_brake: on(&["bremse_feststell", "parking_brake"]),
             stop_brake: on(&["bremse_halte", "bremse_halte_sw", "stop_brake", "bus_stop_brake"]),
             doors_open: crate::plugin_io::bus::doors_open(self).unwrap_or(false),
@@ -418,8 +420,57 @@ fn keys_steer_over_idle_stick(x: f32, keys_steering: f32) -> bool {
     x == 0.0 && keys_steering != 0.0
 }
 
+/// The variables of the indicators' lamps (left, right): OMSI's stock `lights_blinker_l` and
+/// `_r`, else the bus's own, found once per bus among its variables (`lamp_names`). Each bus
+/// met also says in the log the variables a DualSense could show, to tell what one names
+/// otherwise.
+fn indicator_lamps(v: &omsi_sim::VehicleInstance) -> Option<(String, String)> {
+    if v.var("lights_blinker_l").is_some() && v.var("lights_blinker_r").is_some() {
+        return Some(("lights_blinker_l".into(), "lights_blinker_r".into()));
+    }
+    thread_local! {
+        static FOUND: std::cell::RefCell<(usize, Option<(String, String)>)> = const { std::cell::RefCell::new((0, None)) };
+    }
+    let key = std::sync::Arc::as_ptr(v.var_index()) as usize;
+    FOUND.with(|f| {
+        let mut f = f.borrow_mut();
+        if f.0 != key {
+            let names: Vec<&str> = v.var_index().keys().map(String::as_str).collect();
+            let mut said: Vec<&str> = names.iter().copied().filter(|n| ["blink", "retard", "halte", "abs", "getr", "gang", "wunsch"].iter().any(|w| n.contains(w))).collect();
+            said.sort_unstable();
+            said.truncate(80);
+            let lamps = lamp_names(&names);
+            log::info!("DualSense: the bus's indicator lamps {lamps:?}; its variables of the kind: {}", said.join(" "));
+            *f = (key, lamps);
+        }
+        f.1.clone()
+    })
+}
+
+/// Among a script's variables (lower case), the indicator lamps' (left, right): a name with
+/// "blink" in it ending in the side, not a switch, a sound or an animation.
+fn lamp_names(names: &[&str]) -> Option<(String, String)> {
+    const NOT: [&str; 10] = ["sw", "schalter", "hebel", "lever", "warn", "snd", "sound", "anim", "knopf", "relais"];
+    let lamp = |n: &&str| n.contains("blink") && !NOT.iter().any(|w| n.contains(w));
+    let side = |ends: [&str; 3]| {
+        let mut found: Vec<&str> = names.iter().copied().filter(lamp).filter(|n| ends.iter().any(|e| n.ends_with(e))).collect();
+        // (the plainest name: `blinker_l` before `blinker_l_cockpit_l`)
+        found.sort_by_key(|n| (n.len(), *n));
+        found.first().map(|n| n.to_string())
+    };
+    side(["_l", "_links", "_left"]).zip(side(["_r", "_rechts", "_right"]))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn indicator_lamps_are_found_by_their_names() {
+        let names = ["c2_lights_blinker_l", "c2_lights_blinker_r", "lights_sw_blinker_l", "blinker_snd_r", "c2_blinker_l_anim", "door_0"];
+        assert_eq!(super::lamp_names(&names), Some(("c2_lights_blinker_l".into(), "c2_lights_blinker_r".into())));
+        assert_eq!(super::lamp_names(&["blinkerlampe_links", "blinkerlampe_rechts"]), Some(("blinkerlampe_links".into(), "blinkerlampe_rechts".into())));
+        assert_eq!(super::lamp_names(&["lights_sw_blinker", "blinker_relais_l"]), None);
+    }
+
     use super::{controller_notice, gear_step, keys_steer_over_idle_stick};
 
     #[test]

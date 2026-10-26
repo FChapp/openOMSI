@@ -438,6 +438,9 @@ pub struct Devices {
     button_devices: crate::evdev_buttons::ButtonDevices,
     #[cfg(windows)]
     di: Option<crate::dinput::DirectInput>,
+    /// Windows: the DualSenses, read over HID and not through DirectInput (`dualsense`)
+    #[cfg(windows)]
+    dualsense: Option<crate::dualsense::DualSenses>,
     /// macOS: Xbox-type controllers, which gilrs and `hid` cannot read at all (see
     /// `mac_game_controller`).
     #[cfg(target_os = "macos")]
@@ -484,6 +487,8 @@ impl Devices {
             button_devices: crate::evdev_buttons::ButtonDevices::new(),
             #[cfg(windows)]
             di,
+            #[cfg(windows)]
+            dualsense: crate::dualsense::DualSenses::start(ff),
             #[cfg(target_os = "macos")]
             gc: crate::mac_game_controller::GcPads::new(),
             #[cfg(target_os = "macos")]
@@ -514,6 +519,11 @@ impl Devices {
     fn linux_ff_wheel(&self, name: &str) -> bool {
         let mut wheels = self.ff_wheels.borrow_mut();
         *wheels.entry(name.to_string()).or_insert_with(|| crate::evdev_ff::wheel_named(name))
+    }
+
+    #[cfg(windows)]
+    fn dualsense_owns(&self, id: Option<(u16, u16)>) -> bool {
+        self.dualsense.as_ref().is_some_and(|d| d.owns(id))
     }
 
     fn direct_input(&self) -> bool {
@@ -661,11 +671,14 @@ impl Devices {
         #[cfg(windows)]
         if let Some(d) = self.di.as_mut() {
             d.poll();
+            let ds = self.dualsense.as_ref();
             out.extend(d.events.drain(..).filter(|(name, ..)| {
                 d.devices.iter().find(|dev| &dev.name == name)
-                    .map_or(true, |dev| include_direct_input_device(&dev.name, dev.ff_capable(), xinput_pads))
+                    .map_or(true, |dev| include_direct_input_device(&dev.name, dev.ff_capable(), xinput_pads) && !ds.is_some_and(|s| s.owns(dev.hardware_id)))
             }));
         }
+        #[cfg(windows)]
+        out.extend(self.dualsense.as_ref().map(|d| d.take_events()).unwrap_or_default());
         #[cfg(target_os = "macos")]
         if let Some(h) = self.hid.as_mut() {
             self.hid_axes = h.read();
@@ -690,6 +703,7 @@ impl Devices {
                 d.devices
                     .iter()
                     .filter(|_| d.is_focused())
+                    .filter(|d| !self.dualsense_owns(d.hardware_id))
                     // A G920's DirectInput name contains "Xbox One", but it is the
                     // force-feedback wheel. Keep it even when gilrs also lists a pad.
                     .filter(|d| include_direct_input_device(&d.name, d.ff_capable(), xinput_pads))
@@ -707,6 +721,11 @@ impl Devices {
                         buttons: d.buttons.min(128),
                     }),
             );
+        }
+        // (a DualSense as DirectInput listed it: the same name, axes and buttons)
+        #[cfg(windows)]
+        if let Some(ds) = self.dualsense.as_ref().filter(|_| self.di.as_ref().is_none_or(|d| d.is_focused())) {
+            v.extend(ds.pads().into_iter().map(|p| Connected { name: p.name, hardware_id: Some(p.id), axes: crate::dualsense::axes(&p.input), gamepad: !xinput_pads, ff: false, ff_capable: false, buttons: crate::dualsense::BUTTONS }));
         }
         let _ = xinput_pads;
         if let Some(g) = self.gilrs.as_ref() {
@@ -2179,69 +2198,7 @@ mod button_tests {
 }
 
 #[cfg(test)]
-mod device_kind_tests {
-    #[test]
-    fn a_mapped_constant_force_wheel_is_not_a_gamepad() {
-        assert!(super::mapped_device_is_gamepad(true, false));
-        assert!(!super::mapped_device_is_gamepad(true, true));
-        assert!(!super::mapped_device_is_gamepad(false, true));
-    }
-}
-
-#[cfg(test)]
-mod stick_deadzone_tests {
-    use super::stick_deadzone_with;
-
-    #[test]
-    fn the_dead_zone_is_the_settings_and_the_rest_of_the_stick_still_reaches_one() {
-        assert_eq!(stick_deadzone_with(0.14, 0.15), 0.0);
-        assert!(stick_deadzone_with(0.3, 0.15) > 0.0);
-        assert!((stick_deadzone_with(-1.0, 0.15) + 1.0).abs() < 1e-6);
-        assert_eq!(stick_deadzone_with(0.05, 0.0), 0.05);
-    }
-}
-
-#[cfg(test)]
-mod stick_steering_tests {
-    #[test]
-    fn an_idle_device_nobody_set_up_does_not_hold_the_sticks_steering() {
-        assert!(super::stick_steers(None, false, 0.0));
-        assert!(super::stick_steers(Some(0.0), false, -0.6));
-        assert!(super::stick_steers(Some(0.0), false, 0.0));
-        assert!(super::stick_steers(Some(0.02), false, 0.0));
-        assert!(!super::stick_steers(Some(0.8), false, 0.3));
-        assert!(!super::stick_steers(Some(0.0), true, 1.0));
-    }
-}
-
-#[cfg(test)]
-mod right_stick_look_tests {
-    #[test]
-    fn disabling_automatic_look_keeps_driving_controls_and_assigned_look() {
-        for assigned in [[0.0, 0.0], [0.5, -0.25]] {
-            let mut analog = super::Analog { steering: Some(0.3), stick: true, throttle: Some(0.8), brake: Some(0.2), clutch: Some(0.4), look: assigned };
-            analog.apply_default_gamepad_look(false, 1.0, -1.0);
-            assert_eq!(analog.look, assigned);
-            assert_eq!(analog.steering, Some(0.3));
-            assert!(analog.stick);
-            assert_eq!(analog.throttle, Some(0.8));
-            assert_eq!(analog.brake, Some(0.2));
-            assert_eq!(analog.clutch, Some(0.4));
-        }
-    }
-
-    #[test]
-    fn enabled_automatic_look_keeps_dead_zone_direction_and_assigned_axes() {
-        let mut analog = super::Analog::default();
-        analog.apply_default_gamepad_look(true, 0.1, -0.1);
-        assert_eq!(analog.look, [0.0, 0.0]);
-        analog.apply_default_gamepad_look(true, 1.0, -1.0);
-        assert_eq!(analog.look, [1.0, 1.0]);
-        analog.look = [0.25, -0.5];
-        analog.apply_default_gamepad_look(true, -1.0, 1.0);
-        assert_eq!(analog.look, [0.25, -0.5]);
-    }
-}
+mod pad_tests;
 
 #[cfg(test)]
 mod hot_reload_tests;

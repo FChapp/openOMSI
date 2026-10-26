@@ -27,7 +27,7 @@ libc.workspace = true
 # Windows: the game controllers through DirectInput, as OMSI reads them (see `dinput`), and
 # TrackIR / FreeTrack (see `headtrack`)
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 # the DualSense over raw HID (see `dualsense`), through Windows' own HID API: no C library
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 

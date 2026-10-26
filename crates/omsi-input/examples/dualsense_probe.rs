@@ -1,6 +1,14 @@
-//! Tries the DualSense's rumble, adaptive triggers, lights and full input report on a real
-//! pad, step by step, and writes what happened to `dualsense_probe.log` next to where it is
-//! run. A tool for developing `omsi_input::dualsense`, not part of the game.
+//! Tries the DualSense over raw HID on a real pad, step by step, and writes what happened to
+//! `dualsense_probe.log` next to where it is run. A tool for developing
+//! `omsi_input::dualsense`, not part of the game.
+//!
+//! What it finds out:
+//! - whether the game still reads the pad the way it does today (DirectInput on Windows,
+//!   through `Devices`, as the launcher reads it) after each thing raw HID does to it: only
+//!   reading its reports, reading a feature report (which switches a pad over Bluetooth to
+//!   its full report), sending an output report;
+//! - the buttons the full report adds (PS, touchpad click, microphone), the touchpad's
+//!   fingers and the motion sensors.
 //!
 //! `cargo run -p omsi-input --example dualsense_probe`
 
@@ -10,6 +18,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use hidapi::{HidApi, HidDevice};
+use omsi_input::controllers::Devices;
 use omsi_input::dualsense::report::*;
 
 struct Log(Option<File>);
@@ -39,7 +48,7 @@ impl Pad {
         }
     }
 
-    /// The reports waiting, the last full one parsed; and how many were short (Bluetooth's
+    /// The reports waiting: the last full one parsed, and how many were short (Bluetooth's
     /// simple report) or full.
     fn drain(&self) -> (Option<Input>, usize, usize) {
         let mut buf = [0u8; 128];
@@ -60,6 +69,92 @@ impl Pad {
     }
 }
 
+/// The game's own reading of the pad (DirectInput on Windows, gilrs elsewhere).
+struct Game {
+    devices: Devices,
+    /// The last axes seen, to count changes.
+    last: Vec<(usize, f32)>,
+}
+
+impl Game {
+    fn new(log: &mut Log) -> Game {
+        let devices = Devices::new(omsi_input::background::window(), false);
+        let mut g = Game {
+            devices,
+            last: Vec::new(),
+        };
+        g.tick();
+        for c in g.devices.connected() {
+            log.line(&format!(
+                "le jeu voit : {:?} ids {:x?} manette {} axes {} boutons {}",
+                c.name,
+                c.hardware_id,
+                c.gamepad,
+                c.axes.len(),
+                c.buttons
+            ));
+        }
+        g
+    }
+
+    /// Reads the devices once; the DualSense's axes moved and the buttons it pressed.
+    fn tick(&mut self) -> (bool, Vec<usize>) {
+        omsi_input::background::pump();
+        let buttons = self.devices.poll();
+        let Some(pad) = self
+            .devices
+            .connected()
+            .into_iter()
+            .find(|c| is_dualsense(&c.name, c.hardware_id))
+        else {
+            return (false, Vec::new());
+        };
+        let moved = !self.last.is_empty()
+            && pad
+                .axes
+                .iter()
+                .zip(&self.last)
+                .any(|(a, b)| (a.1 - b.1).abs() > 0.02);
+        self.last = pad.axes;
+        let pressed = buttons
+            .into_iter()
+            .filter(|(n, _, down)| *down && is_dualsense(n, None))
+            .map(|(_, b, _)| b);
+        (moved, pressed.collect())
+    }
+
+    /// `secs` of moving the sticks: whether the game and raw HID both saw it.
+    fn check(&mut self, pad: &Pad, log: &mut Log, label: &str, secs: u64) {
+        log.line(&format!(
+            "\n>>> {label}\n    Bouge les DEUX sticks sans arrêt pendant {secs} s..."
+        ));
+        pad.drain();
+        let t = Instant::now();
+        let (mut game_moves, mut game_buttons, mut short, mut full) = (0, 0, 0, 0);
+        while t.elapsed() < Duration::from_secs(secs) {
+            sleep(Duration::from_millis(20));
+            let (moved, pressed) = self.tick();
+            game_moves += usize::from(moved);
+            game_buttons += pressed.len();
+            let (_, s, f) = pad.drain();
+            short += s;
+            full += f;
+        }
+        log.line(&format!(
+            "    jeu : {game_moves} mouvements, {game_buttons} boutons | HID : {short} rapports simples, {full} complets -> {}",
+            if game_moves > 5 { "LE JEU LIT LA MANETTE" } else { "LE JEU NE VOIT RIEN" }
+        ));
+    }
+}
+
+fn is_dualsense(name: &str, id: Option<(u16, u16)>) -> bool {
+    if let Some((v, p)) = id {
+        return v == VENDOR_SONY && matches!(p, PRODUCT_DUALSENSE | PRODUCT_DUALSENSE_EDGE);
+    }
+    let n = name.to_ascii_lowercase();
+    n.contains("dualsense") || n.contains("wireless controller") || n.contains("ps5")
+}
+
 fn wait_enter(log: &mut Log, what: &str) {
     log.line(&format!("\n>>> {what}\n    (Entrée pour continuer)"));
     let mut s = String::new();
@@ -69,17 +164,31 @@ fn wait_enter(log: &mut Log, what: &str) {
     }
 }
 
-fn step(pad: &mut Pad, log: &mut Log, what: &str, secs: f32, set: impl FnOnce(&mut Output)) {
+/// Waits up to `secs` for the full report to show `seen`, telling what it saw.
+fn expect(pad: &Pad, log: &mut Log, what: &str, secs: u64, seen: impl Fn(&Input) -> bool) {
     log.line(&format!("- {what}"));
-    set(&mut pad.out);
-    pad.send(log);
-    sleep(Duration::from_secs_f32(secs));
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        sleep(Duration::from_millis(10));
+        if let (Some(i), _, _) = pad.drain() {
+            if seen(&i) {
+                return log.line("    OK");
+            }
+        }
+    }
+    log.line("    pas vu");
 }
 
 fn main() {
     let mut log = Log(File::create("dualsense_probe.log").ok());
-    log.line("openOMSI - essai DualSense");
+    log.line("openOMSI - essai DualSense v2");
+    wait_enter(
+        &mut log,
+        "Ferme Steam, DS4Windows/DSX et tout jeu ouvert.\n    \
+         Éteins la manette (maintiens PS 10 s), rallume-la (PS), attends qu'elle soit connectée.",
+    );
 
+    let mut game = Game::new(&mut log);
     let api = match HidApi::new() {
         Ok(a) => a,
         Err(e) => return log.line(&format!("hidapi ne démarre pas : {e}")),
@@ -93,7 +202,7 @@ fn main() {
         .collect();
     for d in &pads {
         log.line(&format!(
-            "trouvée : {:04x}:{:04x} {:?} interface {} usage {:x}/{:x} bus {:?}",
+            "HID : {:04x}:{:04x} {:?} interface {} usage {:x}/{:x} bus {:?}",
             d.vendor_id(),
             d.product_id(),
             d.product_string().unwrap_or("?"),
@@ -103,7 +212,6 @@ fn main() {
             d.bus_type(),
         ));
     }
-    // the gamepad collection if the pad shows several
     let Some(info) = pads
         .iter()
         .find(|d| (d.usage_page(), d.usage()) == (1, 5))
@@ -143,242 +251,152 @@ fn main() {
             ""
         }
     ));
-
-    wait_enter(
-        &mut log,
-        "ÉTAPE 1 : Win+R, tape joy.cpl, choisis la manette, Propriétés.\n    \
-         Les sticks et boutons bougent-ils ? Laisse la fenêtre ouverte et réponds (oui/non).",
-    );
-
-    // Reading a feature report switches a pad over Bluetooth to its full report
-    let mut fw = [0u8; FEATURE_FIRMWARE_LEN];
-    fw[0] = FEATURE_FIRMWARE;
-    let firmware = match dev.get_feature_report(&mut fw) {
-        Ok(n) if n >= 46 => u16::from_le_bytes([fw[44], fw[45]]),
-        Ok(n) => {
-            log.line(&format!("rapport firmware court ({n} octets)"));
-            0
-        }
-        Err(e) => {
-            log.line(&format!("rapport firmware refusé : {e}"));
-            0
-        }
-    };
-    let mut cal = [0u8; FEATURE_CALIBRATION_LEN];
-    cal[0] = FEATURE_CALIBRATION;
-    log.line(&format!(
-        "firmware {:#06x}, calibration : {:?}",
-        firmware,
-        dev.get_feature_report(&mut cal)
-    ));
     let mut pad = Pad {
         dev,
         transport,
         seq: 0,
-        out: Output {
-            vibration2: firmware == 0 || firmware >= FIRMWARE_VIBRATION2,
-            ..Output::default()
-        },
+        out: Output::default(),
     };
-    sleep(Duration::from_millis(300));
-    let (_, short, full) = pad.drain();
-    log.line(&format!(
-        "après lecture : {short} rapports simples, {full} complets"
-    ));
 
-    log.line("\nÉTAPE 2 : lumières");
-    step(
-        &mut pad,
+    log.line("\nÉTAPE 1 : le jeu lit-il la manette ?");
+    game.check(
+        &pad,
         &mut log,
-        "on éteint le bleu de connexion",
-        1.5,
-        |o| o.light_out = true,
+        "A. rien demandé à la manette, seulement lu",
+        6,
     );
+
+    let mut fw = [0u8; FEATURE_FIRMWARE_LEN];
+    fw[0] = FEATURE_FIRMWARE;
+    let firmware = match pad.dev.get_feature_report(&mut fw) {
+        Ok(n) if n >= 46 => u16::from_le_bytes([fw[44], fw[45]]),
+        _ => 0,
+    };
+    let mut cal = [0u8; FEATURE_CALIBRATION_LEN];
+    cal[0] = FEATURE_CALIBRATION;
+    let cal_read = pad.dev.get_feature_report(&mut cal);
+    log.line(&format!(
+        "firmware {firmware:#06x}, calibration {cal_read:?} : {:02x?}",
+        &cal[..]
+    ));
+    pad.out.vibration2 = firmware == 0 || firmware >= FIRMWARE_VIBRATION2;
+    game.check(
+        &pad,
+        &mut log,
+        "B. après lecture du firmware et de la calibration",
+        6,
+    );
+
+    pad.out.light_out = true;
+    pad.out.lightbar = [0, 255, 0];
+    pad.send(&mut log);
     pad.out.light_out = false;
-    for (name, rgb) in [
-        ("rouge", [255, 0, 0]),
-        ("vert", [0, 255, 0]),
-        ("bleu", [0, 0, 255]),
-        ("orange (clignotant)", [255, 100, 0]),
-    ] {
-        step(
-            &mut pad,
-            &mut log,
-            &format!("barre lumineuse {name}"),
-            1.2,
-            |o| o.lightbar = rgb,
-        );
-    }
-    for (i, leds) in [0b00100, 0b01010, 0b10101, 0b11011, 0b11111]
-        .into_iter()
-        .enumerate()
-    {
-        step(
-            &mut pad,
-            &mut log,
-            &format!("LED joueur {}", i + 1),
-            0.6,
-            |o| o.player_leds = leds,
-        );
-    }
-    step(&mut pad, &mut log, "LED micro allumée", 1.5, |o| {
-        o.mic_led = MicLed::On
-    });
-    step(&mut pad, &mut log, "LED micro qui pulse", 2.5, |o| {
-        o.mic_led = MicLed::Pulse
-    });
-    step(&mut pad, &mut log, "LED micro éteinte", 0.2, |o| {
-        o.mic_led = MicLed::Off
-    });
-    wait_enter(
+    game.check(
+        &pad,
         &mut log,
-        "As-tu vu rouge, vert, bleu, orange, les LED joueur et la LED micro ?",
+        "C. après un envoi (la barre passe au vert)",
+        6,
     );
 
-    log.line("\nÉTAPE 3 : vibrations");
-    step(&mut pad, &mut log, "gauche (grave) fort", 1.5, |o| {
-        o.rumble_left = 255
-    });
-    step(&mut pad, &mut log, "droite (aiguë) fort", 1.5, |o| {
-        o.rumble_left = 0;
-        o.rumble_right = 255;
-    });
-    log.line("- montée progressive des deux");
-    for v in (0..=255u32).step_by(15) {
-        pad.out.rumble_left = v as u8;
-        pad.out.rumble_right = (v / 2) as u8;
+    pad.out.trigger_right = Trigger::resistance(1, 5);
+    pad.out.rumble_left = 60;
+    for _ in 0..5 {
         pad.send(&mut log);
-        sleep(Duration::from_millis(120));
-    }
-    log.line("- petits coups (comme des pavés)");
-    for _ in 0..12 {
-        pad.out.rumble_left = 180;
-        pad.send(&mut log);
-        sleep(Duration::from_millis(40));
-        pad.out.rumble_left = 0;
-        pad.send(&mut log);
-        sleep(Duration::from_millis(110));
-    }
-    step(&mut pad, &mut log, "arrêt", 0.2, |o| {
-        o.rumble_left = 0;
-        o.rumble_right = 0;
-    });
-    wait_enter(
-        &mut log,
-        "As-tu senti gauche, droite, la montée, les petits coups ?",
-    );
-
-    log.line("\nÉTAPE 4 : gâchettes adaptatives (appuie dessus pendant chaque essai)");
-    step(
-        &mut pad,
-        &mut log,
-        "R2 : résistance uniforme dès le début",
-        0.0,
-        |o| o.trigger_right = Trigger::resistance(1, 5),
-    );
-    wait_enter(&mut log, "R2 est-elle plus dure ?");
-    step(
-        &mut pad,
-        &mut log,
-        "L2 : frein progressif (de plus en plus dur)",
-        0.0,
-        |o| o.trigger_left = Trigger::Feedback([0, 1, 2, 3, 4, 5, 6, 7, 8, 8]),
-    );
-    wait_enter(&mut log, "L2 durcit-elle au fil de la course ?");
-    step(
-        &mut pad,
-        &mut log,
-        "L2 : point dur à mi-course (passage ralentisseur -> frein)",
-        0.0,
-        |o| {
-            o.trigger_left = Trigger::Weapon {
-                start: 4,
-                end: 6,
-                strength: 8,
-            }
-        },
-    );
-    wait_enter(&mut log, "Sens-tu un cran sur L2 ?");
-    step(&mut pad, &mut log, "L2 : vibration (ABS)", 0.0, |o| {
-        o.trigger_left = Trigger::vibration(2, 8, 25)
-    });
-    wait_enter(&mut log, "L2 vibre-t-elle quand tu appuies ?");
-    step(
-        &mut pad,
-        &mut log,
-        "R2 : bloquée (portes ouvertes)",
-        0.0,
-        |o| {
-            o.trigger_left = Trigger::Off;
-            o.trigger_right = Trigger::resistance(0, 8)
-        },
-    );
-    wait_enter(&mut log, "R2 est-elle très dure ?");
-    step(&mut pad, &mut log, "gâchettes libres", 0.2, |o| {
-        o.trigger_left = Trigger::Off;
-        o.trigger_right = Trigger::Off
-    });
-
-    log.line("\nÉTAPE 5 : entrées pendant 20 s (bouge tout : sticks, gâchettes, boutons,");
-    log.line("          incline la manette, glisse un ou deux doigts sur le trackpad)");
-    pad.drain();
-    let t = Instant::now();
-    let (mut seen, mut short_total) = (0usize, 0usize);
-    let mut last = None;
-    let mut touched = false;
-    let mut moved = 0i32;
-    while t.elapsed() < Duration::from_secs(20) {
         sleep(Duration::from_millis(100));
-        let (i, short, full) = pad.drain();
-        seen += full;
-        short_total += short;
-        let Some(i) = i else { continue };
-        touched |= i.touches.iter().any(Option::is_some);
-        moved = moved.max(
-            i.gyro
-                .iter()
-                .map(|g| i32::from(*g).abs())
-                .max()
-                .unwrap_or(0),
-        );
-        print!(
-            "\r G{:3},{:3} D{:3},{:3} L2 {:3} R2 {:3} gyro {:6},{:6},{:6} doigts {:?} {:?}   ",
-            i.left_stick[0],
-            i.left_stick[1],
-            i.right_stick[0],
-            i.right_stick[1],
-            i.l2,
-            i.r2,
-            i.gyro[0],
-            i.gyro[1],
-            i.gyro[2],
-            i.touches[0].map(|t| (t.x, t.y)),
-            i.touches[1].map(|t| (t.x, t.y)),
-        );
-        let _ = std::io::stdout().flush();
-        last = Some(i);
     }
-    println!();
+    pad.out.rumble_left = 0;
+    pad.send(&mut log);
+    game.check(
+        &pad,
+        &mut log,
+        "D. après vibration + R2 durcie (R2 doit rester dure)",
+        6,
+    );
+
+    log.line("\nÉTAPE 2 : boutons et trackpad (10 s max chacun)");
+    expect(&pad, &mut log, "appuie sur PS", 10, |i| i.buttons.ps);
+    expect(&pad, &mut log, "appuie sur le bouton micro", 10, |i| {
+        i.buttons.mic
+    });
+    expect(&pad, &mut log, "clique le trackpad", 10, |i| {
+        i.buttons.touchpad
+    });
+    expect(&pad, &mut log, "pose UN doigt sur le trackpad", 10, |i| {
+        i.touches[0].is_some()
+    });
+    expect(
+        &pad,
+        &mut log,
+        "pose DEUX doigts sur le trackpad",
+        10,
+        |i| i.touches.iter().all(Option::is_some),
+    );
+    log.line("- glisse un doigt d'un coin à l'autre pendant 5 s");
+    let (mut min, mut max) = ([u16::MAX; 2], [0u16; 2]);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(5) {
+        sleep(Duration::from_millis(10));
+        if let (
+            Some(Input {
+                touches: [Some(f), _],
+                ..
+            }),
+            _,
+            _,
+        ) = pad.drain()
+        {
+            min = [min[0].min(f.x), min[1].min(f.y)];
+            max = [max[0].max(f.x), max[1].max(f.y)];
+        }
+    }
     log.line(&format!(
-        "{seen} rapports complets ({:.0}/s), {short_total} simples, trackpad touché : {touched}, \
-         gyro max {moved}",
-        seen as f32 / 20.0
+        "    x {}..{}, y {}..{} (sur {TOUCHPAD_WIDTH} x {TOUCHPAD_HEIGHT})",
+        min[0], max[0], min[1], max[1]
     ));
-    if let Some(i) = last {
-        log.line(&format!("dernier état : {:?}", i.buttons));
+
+    log.line("\nÉTAPE 3 : gyroscope");
+    log.line("- pose la manette à plat, sans la toucher, 3 s");
+    sleep(Duration::from_millis(500));
+    pad.drain();
+    let (mut sum, mut n) = ([0i64; 3], 0i64);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(3) {
+        sleep(Duration::from_millis(5));
+        if let (Some(i), _, _) = pad.drain() {
+            for k in 0..3 {
+                sum[k] += i64::from(i.gyro[k]);
+            }
+            n += 1;
+        }
+    }
+    let rest = sum.map(|s| s / n.max(1));
+    log.line(&format!("    au repos : {rest:?}"));
+    log.line("- prends-la et tourne-la vers la gauche puis la droite (comme un volant), 5 s");
+    let mut peak = [0i32; 3];
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(5) {
+        sleep(Duration::from_millis(5));
+        if let (Some(i), _, _) = pad.drain() {
+            for k in 0..3 {
+                peak[k] = peak[k].max((i32::from(i.gyro[k]) - rest[k] as i32).abs());
+            }
+        }
+    }
+    // 1024 per degree a second before the calibration
+    log.line(&format!(
+        "    pic (°/s, tangage, lacet, roulis) : {:?}",
+        peak.map(|p| p / 1024)
+    ));
+    if let (Some(i), _, _) = pad.drain() {
         log.line(&format!("batterie : {:?}", i.battery));
     }
-
-    wait_enter(
-        &mut log,
-        "ÉTAPE 6 : retourne dans joy.cpl. Les sticks et boutons bougent-ils ENCORE ? (oui/non)",
-    );
 
     pad.out = Output {
         release_leds: true,
         ..Output::default()
     };
     pad.send(&mut log);
-    log.line("Manette rendue. Envoie-moi le fichier dualsense_probe.log, merci !");
+    game.check(&pad, &mut log, "E. manette rendue (fin)", 5);
+    log.line("Envoie-moi le fichier dualsense_probe.log, merci !");
     wait_enter(&mut log, "Fini");
 }

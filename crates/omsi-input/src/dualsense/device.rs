@@ -18,6 +18,10 @@ const SCAN: Duration = Duration::from_secs(2);
 const SILENT: Duration = Duration::from_secs(2);
 /// How long the thread sleeps between two rounds of reading.
 const TICK: Duration = Duration::from_millis(2);
+/// The least time between two output reports to a pad: the game's frames change the rumble
+/// up to some hundred times a second, and a write over Bluetooth can take milliseconds,
+/// which the pad's reports (read on the same thread) would wait for.
+const OUTPUT_EVERY: Duration = Duration::from_millis(12);
 
 /// A pad as the game sees it: its name, ids, how it is connected and its last full report.
 #[derive(Clone, Debug)]
@@ -112,8 +116,9 @@ struct Open {
     seq: u8,
     /// The rumble of firmware 2.24 and later (see `Output::vibration2`).
     vibration2: bool,
-    /// What it was last sent, as the game asked it (None: nothing yet).
+    /// What it was last sent, as the game asked it (None: nothing yet), and when.
     sent: Option<Output>,
+    sent_at: Instant,
 }
 
 impl Open {
@@ -171,6 +176,7 @@ impl Open {
             seq: 0,
             vibration2: firmware == 0 || firmware >= report::FIRMWARE_VIBRATION2,
             sent: None,
+            sent_at: Instant::now(),
         })
     }
 
@@ -220,6 +226,7 @@ impl Open {
             log::warn!("DualSense: {} took no output report: {e}", self.pad.name);
         }
         self.sent = Some(*out);
+        self.sent_at = Instant::now();
     }
 }
 
@@ -294,7 +301,10 @@ fn run(shared: &Mutex<Shared>, write: bool) {
             return;
         }
         if let Some(out) = output.filter(|_| write) {
-            for o in open.iter_mut().filter(|o| o.sent != Some(out)) {
+            for o in open
+                .iter_mut()
+                .filter(|o| o.sent != Some(out) && o.sent_at.elapsed() >= OUTPUT_EVERY)
+            {
                 o.send(&out);
             }
         }

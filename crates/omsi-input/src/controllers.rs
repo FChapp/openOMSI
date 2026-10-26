@@ -19,6 +19,7 @@ use crate::gamepad_profile::{self, PadKind};
 use gilrs::{Axis, EventType, Gilrs};
 use std::path::Path;
 
+mod dualsense_feedback;
 mod held;
 use held::HeldButtons;
 mod ffb;
@@ -1048,6 +1049,9 @@ pub struct Controllers {
     /// The rumble playing (`FF_Vib_Amp` and `FF_Vib_Period` of the bus), rebuilt when
     /// either changes.
     rumble: Vec<(gilrs::GamepadId, gilrs::ff::Effect, f32, f32, f32)>,
+    /// The same shaking for a DualSense (amplitude, period), and the pad's state over frames
+    pad_rumble: (f32, f32),
+    haptics: crate::dualsense::feedback::Haptics,
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     wheel: Option<crate::evdev_ff::Wheel>,
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
@@ -1120,7 +1124,7 @@ impl Controllers {
     }
 
     fn with_devices(devices: Devices, cfg: Vec<DeviceCfg>) -> Controllers {
-        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_smooth: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
+        Controllers { settled: Vec::new(), devices, focused: true, background: false, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), repeating: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_smooth: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), pad_rumble: (0.0, 0.0), haptics: Default::default(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
     }
 
     /// Whether this device steers the bus (set up so, or steering now): the photo mode's camera takes none for its gamepad (a wheel turned it).
@@ -1392,6 +1396,7 @@ impl Controllers {
     /// than cut. Other devices get the vibration as rumble.
     pub fn feedback(&mut self, f: FfInput) {
         let on = self.enabled && f.on && self.ff_enabled && self.focused;
+        self.pad_rumble = (0.0, 0.0);
         let mut f = f;
         if on {
             // The bus body reacts to road and tyre forces every physics step. A short
@@ -1515,6 +1520,7 @@ impl Controllers {
     fn rumble_feedback(&mut self, amp: f32, period: f32) {
         let amp = amp.clamp(0.0, 1.0);
         let period = if period.is_finite() { period.clamp(0.0, 100.0) } else { 0.0 };
+        self.pad_rumble = (amp, period);
         let Some(g) = self.devices.gilrs.as_mut() else { return };
         let pads: Vec<(gilrs::GamepadId, f32, f32)> = g.gamepads()
             .filter(|(_, p)| p.is_ff_supported() && !self.disabled.iter().any(|n| names_match(n, p.name())))

@@ -2302,13 +2302,10 @@ pub fn settings_from_text_on(text: Option<&str>, phone: bool) -> Value {
     v["pad_deadzone"] = json!(0.08);
     v["pad_type"] = json!("auto");
     v["pad_buttons"] = json!(true);
-    v["pad_ds_triggers"] = json!(1.0);
-    v["pad_ds_lightbar"] = json!(true);
-    v["pad_ds_gyro"] = json!("off");
-    v["pad_ds_gyro_sens"] = json!(1.0);
-    v["pad_ds_touch"] = json!(true);
-    v["pad_ds_touch_speed"] = json!(1.0);
-    v["pad_ds_battery"] = json!(true);
+    // a DualSense's (`pad_ds_*`: its triggers, light bar, gyroscope, touchpad, battery)
+    for (k, d) in [("pad_ds_triggers", json!(1.0)), ("pad_ds_lightbar", json!(true)), ("pad_ds_gyro", json!("off")), ("pad_ds_gyro_sens", json!(1.0)), ("pad_ds_touch", json!(true)), ("pad_ds_touch_speed", json!(1.0)), ("pad_ds_battery", json!(true))] {
+        v[k] = d;
+    }
     v["arrows_switch_cams"] = json!(true);
     v["steer_look_response"] = json!(0.25);
     v["head_idle"] = json!(0.0);

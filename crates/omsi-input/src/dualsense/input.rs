@@ -91,7 +91,9 @@ pub fn gyro_look(input: &Input, scale: [f32; 3], gyro: Gyro) -> [f32; 2] {
         if v.abs() < GYRO_FLOOR { 0.0 } else { v }
     };
     // (the yaw counts anticlockwise seen from above: turning the pad right is negative)
-    [-rate(1), rate(0)]
+    // (and the pitch counts the front going down: tilting it up is negative, felt upside down
+    // the other way round)
+    [-rate(1), -rate(0)]
 }
 
 /// The touchpad as a mouse: how far a finger slid since the last frame, in pixels (whole,
@@ -192,8 +194,8 @@ mod tests {
     #[test]
     fn the_gyroscope_looks_round_only_when_chosen() {
         let s = [0.0608; 3];
-        // turning the pad to the right (yaw negative) and tilting it up
-        let turning = input([1645, -1645, 0], [None, None]);
+        // turning the pad to the right (yaw negative) and tilting it up (pitch negative)
+        let turning = input([-1645, -1645, 0], [None, None]);
         assert_eq!(gyro_look(&turning, s, Gyro::Off), [0.0, 0.0]);
         let [x, y] = gyro_look(&turning, s, Gyro::On);
         assert!(
